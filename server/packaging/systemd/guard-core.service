@@ -1,0 +1,23 @@
+[Unit]
+Description=Guard++ core service (API, database, live cameras, test videos)
+Documentation=file:///opt/guard/share/doc/README.md
+After=network.target guard-inference.service
+Wants=guard-inference.service
+
+[Service]
+Type=simple
+User=guard
+Group=guard
+EnvironmentFile=/etc/guard/guard.env
+ExecStart=/opt/guard/bin/guard-core /etc/guard/core.json
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/guard
+
+[Install]
+WantedBy=multi-user.target

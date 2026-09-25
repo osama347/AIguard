@@ -1,0 +1,19 @@
+Package: guard-server
+Version: @VERSION@
+Architecture: arm64
+Maintainer: Guard++ <osama.niazi347@gmail.com>
+Installed-Size: @INSTALLED_SIZE@
+Section: misc
+Priority: optional
+Depends: nvidia-l4t-core (>= 36.4), nvidia-l4t-core (<< 36.5), libnvinfer10 (>= 10.3), libnvonnxparsers10 (>= 10.3), cuda-cudart-12-6, libopencv (>= 4.8), libsqlite3-0, libstdc++6, adduser, systemd
+Recommends: avahi-daemon
+Conflicts: guard
+Replaces: guard
+Homepage: http://127.0.0.1:8090
+Description: Guard++ server for NVIDIA Jetson (AI engine + database)
+ Reads license plates and recognizes drivers in gate video with TensorRT on
+ the Jetson GPU, and decides whether the driver is authorized for the vehicle.
+ .
+ Installs the guard-inference (GPU) and guard-core (API, database) background
+ services. Operators connect over the LAN (port 8090) with the Guard++ desktop
+ app, or a web browser.

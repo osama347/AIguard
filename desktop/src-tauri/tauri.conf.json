@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Guard++ Desktop",
+  "mainBinaryName": "guard-desktop",
+  "version": "2.5.0",
+  "identifier": "com.guardpp.desktop",
+  "build": {
+    "frontendDist": "../../frontend/dist",
+    "beforeBuildCommand": "npm --prefix ../frontend ci --no-audit --no-fund && npm --prefix ../frontend run build"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Guard++",
+        "width": 1280,
+        "height": 840,
+        "minWidth": 900,
+        "minHeight": 600
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http: https:; media-src 'self' http: https: blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Utility",
+    "shortDescription": "Guard++ fleet access control client",
+    "longDescription": "Desktop client for a Guard++ server running on a Jetson on your network.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "linux": {
+      "deb": {
+        "section": "utils"
+      }
+    }
+  }
+}

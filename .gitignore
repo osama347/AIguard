@@ -1,0 +1,21 @@
+# build outputs
+build/
+build-*/
+dist/
+frontend/dist/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+node_modules/
+
+# runtime data
+data/
+logs/
+*.engine
+*.engine.json
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# large model sources (distributed with the package, not in git)
+server/inference/models/*.onnx

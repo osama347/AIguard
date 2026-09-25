@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- The app talks plain HTTP to a Guard++ server on the LAN. -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key><true/>
+    <key>NSAllowsArbitraryLoadsInWebContent</key><true/>
+  </dict>
+  <!-- Finding Guard++ servers on the LAN (mDNS/Bonjour) triggers the macOS "local network" prompt. -->
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Guard++ connects to the Guard++ server on your local network.</string>
+  <key>NSBonjourServices</key>
+  <array><string>_guard._tcp</string></array>
+</dict>
+</plist>

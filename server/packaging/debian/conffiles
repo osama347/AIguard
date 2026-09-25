@@ -1,0 +1,3 @@
+/etc/guard/core.json
+/etc/guard/inference.json
+/etc/avahi/services/guard.service

@@ -1,0 +1,25 @@
+[package]
+name = "guard-desktop"
+version = "2.5.0"
+description = "Guard++ desktop app: a thin shell around the Guard++ web frontend"
+edition = "2021"
+
+[lib]
+name = "guard_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-notification = "2"
+mdns-sd = "0.13"
+serde = { version = "1", features = ["derive"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

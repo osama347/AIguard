@@ -1,0 +1,11 @@
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!-- Announces this Jetson on the LAN so the Guard++ desktop app can find it. -->
+<service-group>
+  <name replace-wildcards="yes">Guard++ on %h</name>
+  <service>
+    <type>_guard._tcp</type>
+    <port>8090</port>
+    <txt-record>path=/api/v1</txt-record>
+  </service>
+</service-group>

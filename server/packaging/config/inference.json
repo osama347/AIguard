@@ -1,0 +1,76 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8081,
+    "threads": 8,
+    "max_request_bytes": 67108864,
+    "timeout_s": 60
+  },
+  "tensorrt": {
+    "device_id": 0,
+    "precision": "fp16",
+    "warmup": true,
+    "workspace_mb": 1024,
+    "engine_cache_dir": "/var/lib/guard/engines",
+    "prebuilt_dir": "/opt/guard/models/prebuilt"
+  },
+  "models": {
+    "plate_detector": {
+      "onnx": "/opt/guard/models/yolo-plate.onnx",
+      "input": {
+        "w": 640,
+        "h": 640
+      },
+      "conf": 0.5,
+      "nms": 0.45,
+      "labels": [
+        "plate"
+      ]
+    },
+    "face_detector": {
+      "onnx": "/opt/guard/models/yolov8n-face.onnx",
+      "input": {
+        "w": 640,
+        "h": 640
+      },
+      "conf": 0.5,
+      "nms": 0.45,
+      "labels": [
+        "face"
+      ]
+    },
+    "ocr": {
+      "onnx": "/opt/guard/models/ocr.onnx",
+      "input": {
+        "w": 128,
+        "h": 64
+      },
+      "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "normalize": 1.0
+    },
+    "face_embedding": {
+      "onnx": "/opt/guard/models/facenet_vggface2.onnx",
+      "input": {
+        "w": 160,
+        "h": 160
+      },
+      "embedding_dim": 512
+    }
+  },
+  "video": {
+    "sample_fps": 5,
+    "retain_finished_s": 600
+  },
+  "live": {
+    "max_streams": 8,
+    "preview_fps": 10,
+    "preview_width": 960,
+    "jpeg_quality": 75,
+    "event_buffer": 600,
+    "frame_images": 60
+  },
+  "logging": {
+    "level": "info",
+    "json_logs": false
+  }
+}

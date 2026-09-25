@@ -1,0 +1,61 @@
+#!/bin/sh
+# Guard++ postinst: service user, data directories, shared secret, services.
+set -e
+
+DATA=/var/lib/guard
+ENV_FILE=/etc/guard/guard.env
+
+case "$1" in
+    configure)
+        if ! getent passwd guard >/dev/null; then
+            adduser --system --group --home "$DATA" --no-create-home --quiet guard
+        fi
+        for g in video render; do
+            getent group "$g" >/dev/null && usermod -aG "$g" guard
+        done
+
+        mkdir -p "$DATA/media" "$DATA/engines" "$DATA/test-videos"   # test-videos: clips used as looped test cameras
+        chown -R guard:guard "$DATA"
+        chmod 750 "$DATA"
+
+        # Shared secret between guard-core and guard-inference; generated once.
+        if [ ! -s "$ENV_FILE" ]; then
+            umask 027
+            printf 'GUARD_INFERENCE_SECRET=%s\n' "$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')" > "$ENV_FILE"
+        fi
+        # One-time code that lets the first administrator be created from another PC.
+        # Only usable until the first account exists.
+        if ! grep -q '^GUARD_SETUP_CODE=' "$ENV_FILE"; then
+            raw="$(od -An -tx1 -N8 /dev/urandom | tr -d ' \n')"
+            printf 'GUARD_SETUP_CODE=%s-%s-%s-%s\n' "$(echo "$raw" | cut -c1-4)" "$(echo "$raw" | cut -c5-8)" \
+                "$(echo "$raw" | cut -c9-12)" "$(echo "$raw" | cut -c13-16)" >> "$ENV_FILE"
+        fi
+        chown root:guard "$ENV_FILE"
+        chmod 640 "$ENV_FILE"
+
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload
+            systemctl enable guard-inference.service guard-core.service >/dev/null
+            systemctl restart guard-inference.service guard-core.service
+        fi
+
+        # Announce the server on the LAN (mDNS) for the desktop app's device list.
+        if [ -d /run/systemd/system ] && systemctl is-active --quiet avahi-daemon; then
+            systemctl reload avahi-daemon >/dev/null 2>&1 || true
+        fi
+
+        cat <<MSG
+
+Guard++ is installed.
+  * Guard++ server is running on port 8090. Install the Guard++ desktop app on your PC
+    and connect to http://<this-device>:8090 (or pick the device from the app's list).
+  * First-time setup (community details + administrator account): open the app and connect,
+    or open http://localhost:8090 on this device. From another PC you need the setup code:
+        $(grep '^GUARD_SETUP_CODE=' "$ENV_FILE" | cut -d= -f2)
+    (also: sudo cat /etc/guard/guard.env)
+  * First start on a new device prepares the AI models; this can take up to 20 minutes.
+    Progress is shown in the app, or: journalctl -fu guard-inference
+MSG
+        ;;
+esac
+exit 0

@@ -1,0 +1,1024 @@
+openapi: 3.0.3
+info:
+  title: Guard++ API
+  version: 2.3.0
+  description: |
+    Public API of guard-core. Used by the browser UI and the desktop app.
+
+    Authentication: `Authorization: Bearer <token>` from `/auth/login` or `/setup`.
+    Endpoints that browsers open directly (`/events`, `/jobs/{id}/video`,
+    `/cameras/{id}/live.mjpeg`, snapshot images) also accept `?access_token=<token>`.
+
+    Live cameras are the primary input: each enabled camera is analysed continuously and
+    every visit (vehicle/person passing) becomes an access event with a snapshot.
+    Uploaded videos (`/jobs`) are a secondary testing path through the same rules.
+
+    Roles: **admin** manages everything. **guard** monitors: live view, access log,
+    alerts (acknowledge/resolve), and read-only drivers, vehicles and cameras. Endpoints
+    marked (admin) return 403 for guards; `/jobs` (test videos) is admin-only.
+
+    Live updates: `GET /events` is a Server-Sent Events stream. Each message's `data`
+    is an `Event` envelope; reconnect with `Last-Event-ID` to resume.
+servers:
+  - url: /api/v1
+security:
+  - bearer: []
+
+paths:
+  /health:
+    get:
+      summary: Service health (no auth)
+      security: []
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Health" } } } }
+
+  /system:
+    get:
+      summary: Models, runner and policy details
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/SystemInfo" } } } }
+
+  /setup:
+    post:
+      summary: Create the first admin account (only while no user exists)
+      description: |
+        From the device itself no code is needed. From another machine the body must carry
+        `setup_code` (the one-time code the installer generated in `/etc/guard/guard.env`);
+        wrong codes are throttled. An optional `community` object saves the community profile
+        in the same call.
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/SetupRequest" } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/LoginResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /community:
+    get:
+      summary: Community profile (public, so the login screen can show it)
+      security: []
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Community" } } } }
+    put:
+      summary: Update the community profile (admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CommunityInput" } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Community" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /community/logo:
+    get:
+      summary: Community logo image (public)
+      security: []
+      responses:
+        "200": { description: PNG, JPEG or WebP image, content: { image/*: { schema: { type: string, format: binary } } } }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Replace the logo (admin; multipart field `logo`, PNG/JPEG/WebP, max 2 MB)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { type: object, required: [logo], properties: { logo: { type: string, format: binary } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Community" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+    delete:
+      summary: Remove the logo (admin)
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Community" } } } }
+
+  /auth/login:
+    post:
+      summary: Log in
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/Credentials" } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/LoginResult" } } } }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /auth/logout:
+    post:
+      summary: End the current session
+      responses:
+        "204": { description: Logged out }
+
+  /auth/me:
+    get:
+      summary: Current user
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+
+  /auth/password:
+    post:
+      summary: Change your own password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string }
+                new_password: { type: string, minLength: 8 }
+      responses:
+        "204": { description: Changed }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /users:
+    get:
+      summary: All users (admin)
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/UserList" } } } }
+    post:
+      summary: Create a user (admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/UserInput" } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /users/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    put:
+      summary: Update a user (admin); give `password` to reset it. Disabling or resetting signs the user out.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/UserInput" } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        "409": { description: Would leave no active administrator, or targets yourself, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      summary: Delete a user (admin)
+      responses:
+        "204": { description: Deleted }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /dashboard:
+    get:
+      summary: Admin dashboard (admin) - camera visits only; buckets in the device's local time
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Dashboard" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /drivers:
+    get:
+      summary: List drivers
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/DriverList" } } } }
+    post:
+      summary: Create a driver (admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/DriverInput" } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Driver" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /drivers/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: Get a driver
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Driver" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Update a driver (admin; omitted fields are kept)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/DriverInput" } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Driver" } } } }
+    delete:
+      summary: Delete a driver (admin)
+      responses:
+        "204": { description: Deleted }
+
+  /drivers/{id}/photos:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Enroll face photos (admin). Each photo's most prominent face becomes a template.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                photos: { type: array, items: { type: string, format: binary } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/EnrollResult" } } } }
+        "503": { $ref: "#/components/responses/Error" }
+    delete:
+      summary: Remove all face templates (admin)
+      responses:
+        "204": { description: Removed }
+
+  /drivers/{id}/vehicles/{vehicleId}:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { name: vehicleId, in: path, required: true, schema: { type: integer, format: int64 } }
+    put:
+      summary: Authorize the driver for the vehicle (admin)
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Driver" } } } }
+    delete:
+      summary: Remove the authorization (admin)
+      responses:
+        "204": { description: Removed }
+
+  /vehicles:
+    get:
+      summary: List vehicles
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/VehicleList" } } } }
+    post:
+      summary: Create a vehicle (admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/VehicleInput" } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Vehicle" } } } }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /vehicles/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: Get a vehicle
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Vehicle" } } } }
+    put:
+      summary: Update a vehicle (admin; omitted fields are kept)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/VehicleInput" } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Vehicle" } } } }
+    delete:
+      summary: Delete a vehicle (admin)
+      responses:
+        "204": { description: Deleted }
+
+  /jobs:
+    get:
+      summary: List analysis jobs, newest first
+      parameters: [{ $ref: "#/components/parameters/Limit" }, { $ref: "#/components/parameters/Offset" }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/JobList" } } } }
+    post:
+      summary: Upload a video for analysis
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [video]
+              properties:
+                video: { type: string, format: binary }
+      responses:
+        "202": { description: Queued, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
+        "413": { $ref: "#/components/responses/Error" }
+
+  /jobs/{jobId}:
+    parameters: [{ $ref: "#/components/parameters/JobId" }]
+    get:
+      summary: Get a job (includes the result once completed)
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
+    delete:
+      summary: Delete a finished job and its media (admin)
+      responses:
+        "204": { description: Deleted }
+
+  /jobs/{jobId}/cancel:
+    parameters: [{ $ref: "#/components/parameters/JobId" }]
+    post:
+      summary: Cancel a queued or running job
+      responses:
+        "202": { description: Cancelling, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
+
+  /jobs/{jobId}/video:
+    parameters: [{ $ref: "#/components/parameters/JobId" }, { $ref: "#/components/parameters/AccessToken" }]
+    get:
+      summary: The uploaded video (supports Range requests)
+      responses:
+        "200": { description: Video bytes }
+
+  /jobs/{jobId}/frames:
+    parameters: [{ $ref: "#/components/parameters/JobId" }]
+    get:
+      summary: Per-frame detections of a completed job (for overlays)
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/FramesDocument" } } } }
+
+  /cameras:
+    get:
+      summary: Cameras with their live status
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/CameraList" } } } }
+    post:
+      summary: Add a camera (admin); enabled cameras start immediately
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CameraInput" } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Camera" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /cameras/probe:
+    post:
+      summary: Try a camera source without saving it (admin)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [source], properties: { source: { type: string } } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ProbeResult" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /cameras/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: One camera
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Camera" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Update a camera (admin); fields not given are kept
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CameraInput" } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Camera" } } } }
+    delete:
+      summary: Remove a camera (admin); its access events are kept
+      responses:
+        "204": { description: Removed }
+
+  /cameras/{id}/live.mjpeg:
+    parameters: [{ $ref: "#/components/parameters/Id" }, { $ref: "#/components/parameters/AccessToken" }]
+    get:
+      summary: Live view as MJPEG (use as <img src>), about 10 fps
+      responses:
+        "200": { description: multipart/x-mixed-replace stream of JPEG frames }
+
+  /cameras/{id}/preview.jpg:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: The current frame as one JPEG
+      responses:
+        "200": { description: JPEG image, content: { image/jpeg: {} } }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /access-events:
+    get:
+      summary: Access log, newest first
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Offset" }
+        - { name: camera_id, in: query, schema: { type: integer, format: int64 } }
+        - { name: source, in: query, schema: { type: string, enum: [camera, video] } }
+        - { name: verdict, in: query, schema: { $ref: "#/components/schemas/Verdict" } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/AccessEventList" } } } }
+
+  /access-events/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: One access event
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/AccessEvent" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /access-events/{id}/snapshot.jpg:
+    parameters: [{ $ref: "#/components/parameters/Id" }, { $ref: "#/components/parameters/AccessToken" }]
+    get:
+      summary: Snapshot of a camera visit (boxes are in details.overlay)
+      responses:
+        "200": { description: JPEG image, content: { image/jpeg: {} } }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /alerts:
+    get:
+      summary: Alerts, newest first
+      parameters:
+        - { name: open, in: query, schema: { type: string, enum: ["true", "false"] }, description: Only unresolved alerts }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/AlertList" } } } }
+
+  /alerts/{id}/acknowledge:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Acknowledge an alert
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Alert" } } } }
+
+  /alerts/{id}/resolve:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Resolve an alert
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Alert" } } } }
+
+  /events:
+    get:
+      summary: Live event stream (Server-Sent Events)
+      parameters:
+        - { name: job, in: query, schema: { type: string }, description: Only this job's events (replays buffered ones) }
+        - { name: camera, in: query, schema: { type: integer }, description: Only this camera's live events }
+        - { name: Last-Event-ID, in: header, schema: { type: string } }
+        - { $ref: "#/components/parameters/AccessToken" }
+      responses:
+        "200":
+          description: text/event-stream of Event envelopes
+          content: { text/event-stream: { schema: { $ref: "#/components/schemas/Event" } } }
+
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer }
+
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    JobId: { name: jobId, in: path, required: true, schema: { type: string, pattern: "^[0-9a-f]+$" } }
+    Limit: { name: limit, in: query, schema: { type: integer, default: 50, maximum: 500 } }
+    Offset: { name: offset, in: query, schema: { type: integer, default: 0 } }
+    AccessToken: { name: access_token, in: query, schema: { type: string }, description: Alternative to the Authorization header }
+
+  responses:
+    Error:
+      description: Error
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  schemas:
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error: { type: string, description: "validation_error | unauthorized | forbidden | not_found | conflict | too_large | unavailable | internal_error" }
+        message: { type: string }
+
+    Status:
+      type: string
+      enum: [active, inactive, blacklisted]
+
+    SetupRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string }
+        setup_code: { type: string, description: Required when not called from the device itself }
+        community: { $ref: "#/components/schemas/CommunityInput" }
+
+    CommunityInput:
+      type: object
+      properties:
+        name: { type: string, maxLength: 120 }
+        address: { type: string, maxLength: 300 }
+        city: { type: string, maxLength: 100 }
+        country: { type: string, maxLength: 100 }
+        helpline: { type: string, maxLength: 60 }
+        email: { type: string, maxLength: 120 }
+        website: { type: string, maxLength: 200 }
+
+    Community:
+      type: object
+      required: [configured, name, address, city, country, helpline, email, website, logo_url]
+      properties:
+        configured: { type: boolean, description: true once the community has a name }
+        name: { type: string }
+        address: { type: string }
+        city: { type: string }
+        country: { type: string }
+        helpline: { type: string }
+        email: { type: string }
+        website: { type: string }
+        logo_url: { type: string, nullable: true, description: Server-relative URL of the logo }
+
+    Health:
+      type: object
+      required: [status, version, uptime_s, setup_required, inference, disk]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        version: { type: string }
+        uptime_s: { type: integer }
+        setup_required: { type: boolean }
+        inference:
+          type: object
+          required: [status, message]
+          properties:
+            status: { type: string, enum: [offline, loading, ok, error] }
+            message: { type: string }
+        disk:
+          type: object
+          required: [free_bytes, total_bytes]
+          properties:
+            free_bytes: { type: integer, format: int64 }
+            total_bytes: { type: integer, format: int64 }
+
+    SystemInfo:
+      type: object
+      required: [version, runner, policy]
+      properties:
+        version: { type: string }
+        models: { type: object, nullable: true, additionalProperties: true }
+        runner:
+          type: object
+          properties:
+            current_job: { type: string, nullable: true }
+        policy:
+          type: object
+          required: [match_threshold, min_face_frames, min_plate_reads, sample_fps]
+          properties:
+            match_threshold: { type: number }
+            min_face_frames: { type: integer }
+            min_plate_reads: { type: integer }
+            sample_fps: { type: number }
+        live:
+          type: object
+          properties:
+            visit_gap_s: { type: number }
+            max_visit_s: { type: number }
+            repeat_suppress_s: { type: number }
+            snapshot_retention_days: { type: integer }
+            cameras: { type: integer }
+
+    CameraInput:
+      type: object
+      properties:
+        name: { type: string, maxLength: 80 }
+        source:
+          type: string
+          description: |
+            csi://0[?width=&height=&fps=] (Jetson CSI), usb://0 or /dev/video0 (USB),
+            rtsp://user:pass@host/path (IP camera), http(s)://... (MJPEG/HLS),
+            file:///path/clip.mp4 (looped, for testing), gst://<pipeline ending in appsink>
+        enabled: { type: boolean, default: true }
+        sample_fps: { type: number, minimum: 0.5, maximum: 15, description: Frames analysed per second }
+
+    CameraStatus:
+      type: object
+      required: [state, message, analysis_fps, width, height, last_frame_at, visit_active]
+      properties:
+        state: { type: string, enum: [starting, waiting, connecting, live, reconnecting, error, disabled] }
+        message: { type: string }
+        analysis_fps: { type: number }
+        width: { type: integer }
+        height: { type: integer }
+        last_frame_at: { type: string, format: date-time, nullable: true }
+        visit_active: { type: boolean, description: Something is in view right now }
+
+    Camera:
+      type: object
+      required: [id, name, source, enabled, sample_fps, created_at, updated_at, status]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        source: { type: string }
+        enabled: { type: boolean }
+        sample_fps: { type: number }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        status: { $ref: "#/components/schemas/CameraStatus" }
+
+    CameraList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Camera" } }
+
+    ProbeResult:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        error: { type: string }
+        backend: { type: string }
+        width: { type: integer }
+        height: { type: integer }
+        fps: { type: number }
+
+    LiveFrame:
+      type: object
+      description: data of a camera.frame event
+      required: [camera_id, frame, ts, width, height, faces, plates, visit_active]
+      properties:
+        camera_id: { type: integer, format: int64 }
+        frame: { type: integer }
+        ts: { type: integer, format: int64, description: Capture time, epoch milliseconds }
+        width: { type: integer }
+        height: { type: integer }
+        faces: { type: array, items: { $ref: "#/components/schemas/FaceDetection" } }
+        plates: { type: array, items: { $ref: "#/components/schemas/PlateDetection" } }
+        visit_active: { type: boolean }
+
+    Overlay:
+      type: object
+      required: [width, height, faces, plates]
+      properties:
+        width: { type: integer }
+        height: { type: integer }
+        faces: { type: array, items: { $ref: "#/components/schemas/FaceDetection" } }
+        plates: { type: array, items: { $ref: "#/components/schemas/PlateDetection" } }
+
+    VerdictCounts:
+      type: object
+      required: [bucket, total, authorized, unauthorized, unknown_driver, unknown_vehicle, unknown_both]
+      properties:
+        bucket: { type: string, description: "YYYY-MM-DD HH:00 (hourly) or YYYY-MM-DD (daily), local time" }
+        total: { type: integer }
+        authorized: { type: integer }
+        unauthorized: { type: integer }
+        unknown_driver: { type: integer }
+        unknown_vehicle: { type: integer }
+        unknown_both: { type: integer }
+
+    Dashboard:
+      type: object
+      required: [today, yesterday, hourly, daily, cameras, cameras_enabled, cameras_live, unregistered_plates, top_drivers, alerts, system]
+      properties:
+        today: { $ref: "#/components/schemas/VerdictCounts" }
+        yesterday: { $ref: "#/components/schemas/VerdictCounts" }
+        hourly: { type: array, items: { $ref: "#/components/schemas/VerdictCounts" }, description: Last 24 hours, oldest first }
+        daily: { type: array, items: { $ref: "#/components/schemas/VerdictCounts" }, description: Last 14 days, oldest first }
+        cameras:
+          type: array
+          items:
+            allOf:
+              - { $ref: "#/components/schemas/Camera" }
+              - { type: object, required: [visits_today], properties: { visits_today: { type: integer } } }
+        cameras_enabled: { type: integer }
+        cameras_live: { type: integer }
+        unregistered_plates:
+          type: array
+          items:
+            type: object
+            required: [plate, count, last_seen, camera]
+            properties:
+              plate: { type: string }
+              count: { type: integer }
+              last_seen: { type: string, format: date-time }
+              camera: { type: string, nullable: true }
+        top_drivers:
+          type: array
+          items:
+            type: object
+            required: [driver_id, name, visits, authorized]
+            properties:
+              driver_id: { type: integer, format: int64 }
+              name: { type: string }
+              visits: { type: integer }
+              authorized: { type: integer }
+        alerts:
+          type: object
+          required: [open, open_critical, unacknowledged, median_response_s, responses_7d, recent_open]
+          properties:
+            open: { type: integer }
+            open_critical: { type: integer }
+            unacknowledged: { type: integer }
+            median_response_s: { type: number, nullable: true, description: Median time to acknowledge (people only), last 7 days }
+            responses_7d: { type: integer }
+            recent_open: { type: array, items: { $ref: "#/components/schemas/Alert" } }
+        system:
+          type: object
+          required: [version, uptime_s, inference, disk_free_bytes, disk_total_bytes, snapshot_bytes, database_bytes,
+                     snapshot_retention_days, active_admins, active_guards]
+          properties:
+            version: { type: string }
+            uptime_s: { type: integer }
+            inference: { type: object, required: [status, message], properties: { status: { type: string }, message: { type: string } } }
+            disk_free_bytes: { type: integer, format: int64 }
+            disk_total_bytes: { type: integer, format: int64 }
+            snapshot_bytes: { type: integer, format: int64 }
+            database_bytes: { type: integer, format: int64 }
+            snapshot_retention_days: { type: integer }
+            active_admins: { type: integer }
+            active_guards: { type: integer }
+
+    Credentials:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 3, maxLength: 32 }
+        password: { type: string, minLength: 8, maxLength: 128 }
+
+    Role:
+      type: string
+      enum: [admin, guard]
+
+    User:
+      type: object
+      required: [id, username, full_name, role, active, created_at, last_login_at]
+      properties:
+        id: { type: integer, format: int64 }
+        username: { type: string }
+        full_name: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        active: { type: boolean }
+        created_at: { type: string, format: date-time }
+        last_login_at: { type: string, format: date-time, nullable: true }
+
+    UserInput:
+      type: object
+      properties:
+        username: { type: string, description: "3-32 characters; set on creation only" }
+        full_name: { type: string, maxLength: 80 }
+        password: { type: string, minLength: 8, description: Required on creation; on update resets it }
+        role: { $ref: "#/components/schemas/Role" }
+        active: { type: boolean }
+
+    UserList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/User" } }
+
+    LoginResult:
+      type: object
+      required: [token, user, expires_in_hours]
+      properties:
+        token: { type: string }
+        user: { $ref: "#/components/schemas/User" }
+        expires_in_hours: { type: integer }
+
+    DriverInput:
+      type: object
+      properties:
+        name: { type: string, maxLength: 120 }
+        status: { $ref: "#/components/schemas/Status" }
+        phone: { type: string }
+        notes: { type: string }
+
+    Driver:
+      type: object
+      required: [id, name, status, phone, notes, photo_count, vehicles, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        status: { $ref: "#/components/schemas/Status" }
+        phone: { type: string }
+        notes: { type: string }
+        photo_count: { type: integer }
+        vehicles:
+          type: array
+          items:
+            type: object
+            required: [id, plate_number]
+            properties:
+              id: { type: integer, format: int64 }
+              plate_number: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    DriverList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Driver" } }
+
+    EnrollResult:
+      type: object
+      required: [enrolled, photos, driver]
+      properties:
+        enrolled: { type: integer }
+        photos:
+          type: array
+          items:
+            type: object
+            required: [filename, enrolled, error]
+            properties:
+              filename: { type: string }
+              enrolled: { type: boolean }
+              error: { type: string, nullable: true, description: "no_face | invalid_image" }
+        driver: { $ref: "#/components/schemas/Driver" }
+
+    VehicleInput:
+      type: object
+      properties:
+        plate_number: { type: string }
+        make: { type: string }
+        model: { type: string }
+        color: { type: string }
+        status: { $ref: "#/components/schemas/Status" }
+
+    Vehicle:
+      type: object
+      required: [id, plate_number, plate_normalized, make, model, color, status, drivers, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        plate_number: { type: string }
+        plate_normalized: { type: string, description: "Uppercase A-Z/0-9 form used for matching" }
+        make: { type: string }
+        model: { type: string }
+        color: { type: string }
+        status: { $ref: "#/components/schemas/Status" }
+        drivers:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: { type: integer, format: int64 }
+              name: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    VehicleList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Vehicle" } }
+
+    Verdict:
+      type: string
+      enum: [authorized, unauthorized, unknown_driver, unknown_vehicle, unknown_both]
+
+    VideoInfo:
+      type: object
+      properties:
+        width: { type: integer }
+        height: { type: integer }
+        fps: { type: number }
+        total_frames: { type: integer }
+
+    JobResult:
+      type: object
+      required: [verdict, authorized, blacklisted, reason, driver, vehicle, drivers_seen, plates_read, faces_seen, unknown_faces, frames_analysed]
+      properties:
+        verdict: { $ref: "#/components/schemas/Verdict" }
+        authorized: { type: boolean }
+        blacklisted: { type: boolean }
+        reason: { type: string }
+        driver:
+          type: object
+          nullable: true
+          required: [id, name, similarity, frames]
+          properties:
+            id: { type: integer, format: int64 }
+            name: { type: string }
+            similarity: { type: number }
+            frames: { type: integer }
+        vehicle:
+          type: object
+          nullable: true
+          required: [id, plate_number, reads]
+          properties:
+            id: { type: integer, format: int64 }
+            plate_number: { type: string }
+            reads: { type: integer }
+        drivers_seen:
+          type: array
+          items:
+            type: object
+            required: [id, name, status, frames, best_similarity]
+            properties:
+              id: { type: integer, format: int64 }
+              name: { type: string }
+              status: { type: string }
+              frames: { type: integer }
+              best_similarity: { type: number }
+        plates_read:
+          type: array
+          items:
+            type: object
+            required: [text, reads, vehicle_id]
+            properties:
+              text: { type: string }
+              reads: { type: integer }
+              vehicle_id: { type: integer, format: int64, nullable: true }
+        faces_seen: { type: integer }
+        unknown_faces: { type: integer }
+        frames_analysed: { type: integer }
+        video: { $ref: "#/components/schemas/VideoInfo" }
+        processing_ms: { type: number }
+
+    Job:
+      type: object
+      required: [id, status, original_name, size_bytes, attempts, progress, verdict, result, error, created_by, created_at, started_at, finished_at]
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [queued, running, completed, failed, cancelled] }
+        original_name: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        attempts: { type: integer }
+        progress: { type: number, description: "0..1" }
+        verdict: { allOf: [{ $ref: "#/components/schemas/Verdict" }], nullable: true }
+        result: { allOf: [{ $ref: "#/components/schemas/JobResult" }], nullable: true }
+        error: { type: string, nullable: true }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+        queue_position: { type: integer, description: "Jobs ahead of this one (queued jobs only)" }
+
+    JobList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Job" } }
+
+    BBox:
+      type: array
+      description: "[x, y, width, height] in video pixels"
+      items: { type: integer }
+      minItems: 4
+      maxItems: 4
+
+    FaceDetection:
+      type: object
+      required: [bbox, conf]
+      properties:
+        bbox: { $ref: "#/components/schemas/BBox" }
+        conf: { type: number }
+        driver_id: { type: integer, format: int64 }
+        driver_name: { type: string }
+        similarity: { type: number }
+
+    PlateDetection:
+      type: object
+      required: [bbox, conf, text, text_conf]
+      properties:
+        bbox: { $ref: "#/components/schemas/BBox" }
+        conf: { type: number }
+        text: { type: string, description: Normalized OCR text }
+        text_conf: { type: number }
+        vehicle_id: { type: integer, format: int64 }
+
+    Frame:
+      type: object
+      required: [frame, t_ms, faces, plates]
+      properties:
+        frame: { type: integer }
+        t_ms: { type: number }
+        faces: { type: array, items: { $ref: "#/components/schemas/FaceDetection" } }
+        plates: { type: array, items: { $ref: "#/components/schemas/PlateDetection" } }
+
+    FramesDocument:
+      type: object
+      required: [video, frames]
+      properties:
+        video: { $ref: "#/components/schemas/VideoInfo" }
+        frames: { type: array, items: { $ref: "#/components/schemas/Frame" } }
+
+    AccessEvent:
+      type: object
+      required: [id, event_time, ended_at, source, job_id, camera_id, camera_name, has_snapshot, verdict, authorized,
+                 driver_id, driver_name, vehicle_id, plate_text, details]
+      properties:
+        id: { type: integer, format: int64 }
+        event_time: { type: string, format: date-time, description: Start of the visit (camera) or analysis time (video) }
+        ended_at: { type: string, format: date-time, nullable: true }
+        source: { type: string, enum: [camera, video] }
+        job_id: { type: string, nullable: true }
+        camera_id: { type: integer, format: int64, nullable: true }
+        camera_name: { type: string, nullable: true }
+        has_snapshot: { type: boolean }
+        verdict: { $ref: "#/components/schemas/Verdict" }
+        authorized: { type: boolean }
+        driver_id: { type: integer, format: int64, nullable: true }
+        driver_name: { type: string, nullable: true }
+        vehicle_id: { type: integer, format: int64, nullable: true }
+        plate_text: { type: string }
+        details:
+          type: object
+          properties:
+            reason: { type: string }
+            frames: { type: integer }
+            duration_ms: { type: integer }
+            overlay: { $ref: "#/components/schemas/Overlay" }
+
+    AccessEventList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/AccessEvent" } }
+
+    Alert:
+      type: object
+      required: [id, created_at, severity, kind, message, access_event_id, acknowledged_at, resolved_at,
+                 acknowledged_by, resolved_by]
+      properties:
+        id: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        severity: { type: string, enum: [info, warning, critical] }
+        kind: { type: string, enum: [unauthorized, blacklisted, unknown_driver, camera_offline, system] }
+        message: { type: string }
+        access_event_id: { type: integer, format: int64, nullable: true }
+        acknowledged_at: { type: string, format: date-time, nullable: true }
+        resolved_at: { type: string, format: date-time, nullable: true }
+        acknowledged_by: { type: string, nullable: true, description: Username, or "system" }
+        resolved_by: { type: string, nullable: true }
+
+    AlertList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Alert" } }
+
+    Event:
+      type: object
+      description: |
+        SSE envelope. `data` depends on `type`:
+        job.queued / job.cancelled / job.failed / job.completed → Job;
+        job.started → {job: Job, video: VideoInfo};
+        job.frame → Frame + {job_id, progress};
+        camera.frame → LiveFrame (high rate, not replayed after long gaps);
+        camera.status → {camera_id, state, message};
+        access.event → AccessEvent (a camera visit or test video was decided);
+        alert.created / alert.updated → Alert.
+      required: [type, data]
+      properties:
+        type:
+          type: string
+          enum: [job.queued, job.started, job.frame, job.completed, job.failed, job.cancelled,
+                 camera.frame, camera.status, access.event, alert.created, alert.updated]
+        data: { type: object, additionalProperties: true }

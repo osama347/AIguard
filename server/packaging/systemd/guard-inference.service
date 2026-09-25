@@ -1,0 +1,27 @@
+[Unit]
+Description=Guard++ inference service (TensorRT, GPU, cameras)
+Documentation=file:///opt/guard/share/doc/README.md
+After=network.target
+
+[Service]
+Type=simple
+User=guard
+Group=guard
+SupplementaryGroups=video render
+EnvironmentFile=/etc/guard/guard.env
+ExecStart=/opt/guard/bin/guard-inference /etc/guard/inference.json
+Restart=always
+RestartSec=3
+# First start on a new device builds TensorRT engines from ONNX (minutes).
+TimeoutStopSec=20
+NoNewPrivileges=true
+ProtectSystem=full
+# Test-clip "cameras" (file://) may live in a home directory.
+ProtectHome=read-only
+# CSI cameras: libargus talks to nvargus-daemon through /tmp/argus_socket,
+# so this service must see the real /tmp.
+PrivateTmp=false
+ReadWritePaths=/var/lib/guard
+
+[Install]
+WantedBy=multi-user.target

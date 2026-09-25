@@ -1,0 +1,36 @@
+#!/bin/sh
+# Guard++ preinst: refuse unsupported platforms, retire the legacy install.
+set -e
+
+SUPPORTED_L4T="R36 (release), REVISION: 4."
+
+check_platform() {
+    [ "${GUARD_SKIP_PLATFORM_CHECK:-0}" = "1" ] && return 0
+    if ! grep -qF "$SUPPORTED_L4T" /etc/nv_tegra_release 2>/dev/null; then
+        echo "Guard++ requires JetPack 6.2 (L4T R36.4.x). Found:" >&2
+        head -n1 /etc/nv_tegra_release >&2 2>/dev/null || echo "  not an NVIDIA Jetson" >&2
+        exit 1
+    fi
+    if ! tr -d '\0' < /proc/device-tree/model 2>/dev/null | grep -q "Orin"; then
+        echo "Guard++ requires a Jetson Orin module (Orin Nano / NX / AGX)." >&2
+        exit 1
+    fi
+}
+
+retire_legacy() {
+    # Services from the pre-2.0 installer (installed under /opt/guard++).
+    for unit in guard-ai-engine.service guard-database.service guard-backend.service; do
+        if [ -d /run/systemd/system ] && systemctl list-unit-files "$unit" >/dev/null 2>&1; then
+            systemctl stop "$unit" 2>/dev/null || true
+            systemctl disable "$unit" 2>/dev/null || true
+        fi
+    done
+}
+
+case "$1" in
+    install|upgrade)
+        check_platform
+        retire_legacy
+        ;;
+esac
+exit 0

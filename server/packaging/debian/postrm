@@ -1,0 +1,15 @@
+#!/bin/sh
+# "remove" keeps data and configuration; "purge" deletes everything.
+set -e
+case "$1" in
+    purge)
+        rm -rf /var/lib/guard /etc/guard
+        if getent passwd guard >/dev/null; then
+            deluser --quiet --system guard >/dev/null 2>&1 || true
+        fi
+        ;;
+esac
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+exit 0
