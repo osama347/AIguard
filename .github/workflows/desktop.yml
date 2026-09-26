@@ -1,12 +1,16 @@
 # Builds the Guard++ desktop installers for Windows, macOS and Linux.
 # Run manually (Actions → Desktop installers) or push a tag like desktop-v2.5.0.
-# Installers are attached to the workflow run as artifacts.
+# Installers are attached to the workflow run as artifacts, and on a tag push
+# also published to a GitHub Release.
 name: Desktop installers
 
 on:
   workflow_dispatch:
   push:
     tags: ["desktop-v*"]
+
+permissions:
+  contents: write   # needed to create the GitHub Release
 
 jobs:
   build:
@@ -39,6 +43,16 @@ jobs:
         with:
           name: guard-desktop-${{ matrix.os }}
           path: |
+            desktop/src-tauri/target/**/release/bundle/**/*.msi
+            desktop/src-tauri/target/**/release/bundle/**/*.exe
+            desktop/src-tauri/target/**/release/bundle/**/*.dmg
+            desktop/src-tauri/target/**/release/bundle/**/*.deb
+            desktop/src-tauri/target/**/release/bundle/**/*.AppImage
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
             desktop/src-tauri/target/**/release/bundle/**/*.msi
             desktop/src-tauri/target/**/release/bundle/**/*.exe
             desktop/src-tauri/target/**/release/bundle/**/*.dmg
