@@ -52,9 +52,45 @@ async fn discover_servers() -> Result<Vec<FoundServer>, String> {
         .map_err(|e| e.to_string())?
 }
 
+// Checks GitHub Releases for a newer signed build (the endpoint and public key
+// are in tauri.conf.json) and, if the user agrees, installs it and restarts.
+// Failures are ignored on purpose: no internet, or no release yet, must never
+// get in the way of using the app on a LAN.
+async fn check_for_update(app: tauri::AppHandle) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+    use tauri_plugin_updater::UpdaterExt;
+
+    let Ok(updater) = app.updater() else { return };
+    let Ok(Some(update)) = updater.check().await else { return };
+    let ask = app
+        .dialog()
+        .message(format!(
+            "Guard++ Desktop {} is available (you have {}). Install it now? The app will restart.",
+            update.version, update.current_version
+        ))
+        .title("Update available")
+        .buttons(MessageDialogButtons::OkCancelCustom("Install".into(), "Later".into()));
+    let (tx, rx) = std::sync::mpsc::channel();
+    ask.show(move |yes| {
+        let _ = tx.send(yes);
+    });
+    let yes = tauri::async_runtime::spawn_blocking(move || rx.recv().unwrap_or(false))
+        .await
+        .unwrap_or(false);
+    if yes && update.download_and_install(|_, _| {}, || {}).await.is_ok() {
+        app.restart();
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .setup(|app| {
+            tauri::async_runtime::spawn(check_for_update(app.handle().clone()));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![discover_servers])
         .run(tauri::generate_context!())
         .expect("failed to start the Guard++ desktop app");

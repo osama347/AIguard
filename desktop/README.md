@@ -50,3 +50,21 @@ The app is unsigned, so macOS blocks the first launch: right-click **Guard++ Des
 *Open* → *Open* (or `xattr -dr com.apple.quarantine "/Applications/Guard++ Desktop.app"`).
 Allow the "local network" prompt so the Jetson can be found. The Mac must be on the
 same network as the Jetson.
+
+## Auto-update
+
+Installed apps check `https://github.com/osama347/AIguard/releases/latest/download/latest.json`
+at startup and offer to install a newer signed build. Updates are verified against the
+public key in `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`).
+
+**One-time setup:** the private key is `~/.tauri/guard-desktop.key` on the dev Jetson (not in
+the repo; back it up, since losing it means installed apps can never update again). Add its
+contents as the repo secret `TAURI_SIGNING_PRIVATE_KEY` (Settings → Secrets and variables →
+Actions). The key has no password, so no password secret is needed.
+
+**Releasing:** bump the version in `tauri.conf.json`, `src-tauri/Cargo.toml` and `package.json`,
+commit, then `git tag desktop-vX.Y.Z && git push origin desktop-vX.Y.Z`. CI builds all three
+platforms and publishes the release with `latest.json`.
+
+**Local builds** now need the key because update payloads are signed:
+`TAURI_SIGNING_PRIVATE_KEY_PATH=~/.tauri/guard-desktop.key npm run build:linux`.

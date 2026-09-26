@@ -1,7 +1,8 @@
 # Builds the Guard++ desktop installers for Windows, macOS and Linux.
 # Run manually (Actions → Desktop installers) or push a tag like desktop-v2.5.0.
 # Installers are attached to the workflow run as artifacts, and on a tag push
-# also published to a GitHub Release.
+# also published to a GitHub Release together with latest.json for auto-update.
+# The tag must match the version in tauri.conf.json, Cargo.toml and package.json.
 name: Desktop installers
 
 on:
@@ -38,21 +39,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
       - run: npm ci
-      - run: npx tauri build ${{ matrix.args }}
+      # Builds, signs the update payloads, and on a tag push creates the GitHub
+      # Release with the installers plus latest.json (what installed apps poll).
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: desktop
+          args: ${{ matrix.args }}
+          tagName: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && github.ref_name || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && format('Guard++ Desktop {0}', github.ref_name) || '' }}
+          uploadUpdaterJson: true
       - uses: actions/upload-artifact@v4
         with:
           name: guard-desktop-${{ matrix.os }}
           path: |
-            desktop/src-tauri/target/**/release/bundle/**/*.msi
-            desktop/src-tauri/target/**/release/bundle/**/*.exe
-            desktop/src-tauri/target/**/release/bundle/**/*.dmg
-            desktop/src-tauri/target/**/release/bundle/**/*.deb
-            desktop/src-tauri/target/**/release/bundle/**/*.AppImage
-      - name: Publish to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
             desktop/src-tauri/target/**/release/bundle/**/*.msi
             desktop/src-tauri/target/**/release/bundle/**/*.exe
             desktop/src-tauri/target/**/release/bundle/**/*.dmg
