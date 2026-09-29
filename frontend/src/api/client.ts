@@ -110,6 +110,12 @@ const base = () => {
   return serverUrl() + "/api/v1";
 };
 
+// A wrong or unreachable server address otherwise hangs on the OS-level TCP
+// timeout (can be a minute or more) with no feedback. Uploads (FormData) get
+// longer to allow for large files on a slow LAN.
+const DEFAULT_TIMEOUT_MS = 10_000;
+const UPLOAD_TIMEOUT_MS = 60_000;
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -120,11 +126,20 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     payload = JSON.stringify(body);
   }
 
+  const controller = new AbortController();
+  const timeoutMs = body instanceof FormData ? UPLOAD_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   let res: Response;
   try {
-    res = await fetch(base() + path, { method, headers, body: payload });
-  } catch {
+    res = await fetch(base() + path, { method, headers, body: payload, signal: controller.signal });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new ApiError(0, "timeout", `Timed out reaching Guard++ at ${serverUrl() || window.location.origin}. Check the address and try again.`);
+    }
     throw new ApiError(0, "network", `Cannot reach the Guard++ service at ${serverUrl() || window.location.origin}`);
+  } finally {
+    clearTimeout(timer);
   }
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => null);
