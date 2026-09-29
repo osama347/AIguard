@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Guard++ Desktop",
   "mainBinaryName": "guard-desktop",
-  "version": "2.5.1",
+  "version": "2.5.2",
   "identifier": "com.guardpp.desktop",
   "build": {
     "frontendDist": "../../frontend/dist",
