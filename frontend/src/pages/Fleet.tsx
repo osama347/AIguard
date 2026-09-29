@@ -1,4 +1,5 @@
 import { useMemo, useState, type FormEvent } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, type Driver, type EnrollResult, type Status, type Vehicle } from "../api/client";
 import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session";
@@ -36,31 +37,26 @@ function EnrollSummary({ result }: { result: EnrollResult | null }) {
   );
 }
 
-// ====================================================================== drivers
+// ====================================================================== drivers ("People" tab)
 
-export function DriversPage() {
-  const { user } = useSession();
-  const isAdmin = user?.role === "admin";
-  const drivers = useAsync(() => api.drivers(), []);
-  const vehicles = useAsync(() => api.vehicles(), []);
+/** The "People" tab of the Fleet page: owners and the drivers they've authorized.
+ *  Creation always happens from the Vehicles tab (registering a vehicle enrolls its
+ *  owner; redeeming a code adds another driver) — this tab is the roster + editor. */
+function PeopleTab({ drivers, vehicles, isAdmin, onChanged }: {
+  drivers: ReturnType<typeof useAsync<Driver[]>>; vehicles: Vehicle[]; isAdmin: boolean; onChanged: () => void;
+}) {
   const [editing, setEditing] = useState<Driver | null>(null);
   const textOf = useMemo(() => (d: Driver) => `${d.name} ${d.phone} ${d.vehicles.map((v) => v.plate_number).join(" ")}`, []);
   const { q, setQ, filtered } = useFilter(drivers.data, textOf);
 
-  const refresh = () => { drivers.reload(); vehicles.reload(); };
-
   return (
     <>
-      <PageHeader
-        title="Drivers"
-        subtitle="Owners and the people they've authorized to drive their vehicle. Register a new vehicle (with its owner) from the Vehicles page, or add an authorized driver there using the owner's code."
-      />
       <ErrorBox error={drivers.error} onRetry={drivers.reload} />
       {drivers.loading && !drivers.data ? <Spinner /> : !drivers.data?.length ? (
-        <Empty title="No drivers yet">Register a vehicle from the Vehicles page to add its owner.</Empty>
+        <Empty title="No people yet">Register a vehicle to add its owner.</Empty>
       ) : (
         <div className="card card-flush">
-          <div className="table-tools"><input placeholder="Search drivers…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+          <div className="table-tools"><input placeholder="Search people…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
           <div className="table-wrap">
             <table>
               <thead><tr><th>Name</th><th>Status</th><th>Face photos</th><th>Vehicles</th><th>Phone</th></tr></thead>
@@ -82,10 +78,10 @@ export function DriversPage() {
       {editing && (
         <DriverEditor
           driver={editing}
-          vehicles={vehicles.data ?? []}
+          vehicles={vehicles}
           readOnly={!isAdmin}
           onClose={() => setEditing(null)}
-          onChanged={(d) => { if (d) setEditing(d); refresh(); }}
+          onChanged={(d) => { if (d) setEditing(d); onChanged(); }}
         />
       )}
     </>
@@ -441,32 +437,19 @@ export function RegisterVehicleWizard({ initialPlate, onClose, onDone }: {
   );
 }
 
-export function VehiclesPage() {
-  const { user } = useSession();
-  const isAdmin = user?.role === "admin";
-  const vehicles = useAsync(() => api.vehicles(), []);
+/** The "Vehicles" tab of the Fleet page. */
+function VehiclesTab({ vehicles, isAdmin, onChanged }: {
+  vehicles: ReturnType<typeof useAsync<Vehicle[]>>; isAdmin: boolean; onChanged: () => void;
+}) {
   const [editing, setEditing] = useState<Vehicle | null>(null);
-  const [registering, setRegistering] = useState(false);
-  const [authorizing, setAuthorizing] = useState(false);
   const [settingOwnerFor, setSettingOwnerFor] = useState<Vehicle | null>(null);
   const [viewingDriver, setViewingDriver] = useState<number | null>(null);
   const textOf = useMemo(() => (v: Vehicle) =>
     `${v.plate_number} ${v.plate_normalized} ${v.make} ${v.model} ${v.color} ${v.owner?.name ?? ""}`, []);
   const { q, setQ, filtered } = useFilter(vehicles.data, textOf);
-  const refresh = () => vehicles.reload();
 
   return (
     <>
-      <PageHeader
-        title="Vehicles"
-        subtitle="Registered plates, one owner each. Plates are matched ignoring spaces, dashes and case."
-        actions={isAdmin && (
-          <div className="row">
-            <button className="btn" onClick={() => setAuthorizing(true)}>Add driver by code</button>
-            <button className="btn btn-primary" onClick={() => setRegistering(true)}>Register vehicle</button>
-          </div>
-        )}
-      />
       <ErrorBox error={vehicles.error} onRetry={vehicles.reload} />
       {vehicles.loading && !vehicles.data ? <Spinner /> : !vehicles.data?.length ? (
         <Empty title="No vehicles yet">Register a vehicle and its owner to get started.</Empty>
@@ -503,20 +486,67 @@ export function VehiclesPage() {
       )}
       {editing && (
         <VehicleEditor vehicle={editing} readOnly={!isAdmin}
-          onClose={() => setEditing(null)} onSaved={() => { setEditing(null); refresh(); }}
+          onClose={() => setEditing(null)} onSaved={() => { setEditing(null); onChanged(); }}
           onPickDriver={setViewingDriver} />
       )}
-      {registering && <RegisterVehicleWizard onClose={() => setRegistering(false)} onDone={() => { setRegistering(false); refresh(); }} />}
       {settingOwnerFor && (
         <SetOwnerModal vehicle={settingOwnerFor} onClose={() => setSettingOwnerFor(null)}
-          onSaved={() => { setSettingOwnerFor(null); refresh(); }} />
-      )}
-      {authorizing && (
-        <Modal title="Add driver by code" onClose={() => setAuthorizing(false)}>
-          <DriverAuthorizeForm onDone={() => { setAuthorizing(false); refresh(); }} />
-        </Modal>
+          onSaved={() => { setSettingOwnerFor(null); onChanged(); }} />
       )}
       {viewingDriver !== null && <DriverCard driverId={viewingDriver} onClose={() => setViewingDriver(null)} />}
+    </>
+  );
+}
+
+type FleetTab = "vehicles" | "people";
+
+/** Vehicles and the people authorized to drive them, as one page: both kinds of
+ *  record are created together (registering a vehicle enrolls its owner; redeeming
+ *  a code adds another driver), so a single page with tabs beats two separate ones. */
+export function FleetPage() {
+  const { user } = useSession();
+  const isAdmin = user?.role === "admin";
+  const [params, setParams] = useSearchParams();
+  const tab: FleetTab = params.get("tab") === "people" ? "people" : "vehicles";
+  const setTab = (t: FleetTab) => setParams(t === "vehicles" ? {} : { tab: t }, { replace: true });
+
+  const vehicles = useAsync(() => api.vehicles(), []);
+  const drivers = useAsync(() => api.drivers(), []);
+  const [registering, setRegistering] = useState(false);
+  const [authorizing, setAuthorizing] = useState(false);
+  const refreshAll = () => { vehicles.reload(); drivers.reload(); };
+
+  return (
+    <>
+      <PageHeader
+        title="Fleet"
+        subtitle="Vehicles and the people authorized to drive them. Plates are matched ignoring spaces, dashes and case."
+        actions={isAdmin && (
+          <div className="row">
+            <button className="btn" onClick={() => setAuthorizing(true)}>Add driver by code</button>
+            <button className="btn btn-primary" onClick={() => setRegistering(true)}>Register vehicle</button>
+          </div>
+        )}
+      />
+      <div className="tabs">
+        <button type="button" className={tab === "vehicles" ? "tab tab-active" : "tab"} onClick={() => setTab("vehicles")}>
+          Vehicles{vehicles.data ? ` (${vehicles.data.length})` : ""}
+        </button>
+        <button type="button" className={tab === "people" ? "tab tab-active" : "tab"} onClick={() => setTab("people")}>
+          People{drivers.data ? ` (${drivers.data.length})` : ""}
+        </button>
+      </div>
+
+      {tab === "vehicles"
+        ? <VehiclesTab vehicles={vehicles} isAdmin={isAdmin} onChanged={refreshAll} />
+        : <PeopleTab drivers={drivers} vehicles={vehicles.data ?? []} isAdmin={isAdmin} onChanged={refreshAll} />}
+
+      {registering && <RegisterVehicleWizard onClose={() => setRegistering(false)} onDone={() => { setRegistering(false); refreshAll(); }} />}
+      {authorizing && (
+        <Modal title="Add driver by code" onClose={() => setAuthorizing(false)}>
+          <DriverAuthorizeForm onDone={() => { setAuthorizing(false); refreshAll(); }} />
+        </Modal>
+      )}
     </>
   );
 }

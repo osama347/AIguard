@@ -128,10 +128,10 @@ export function JobDetailPage() {
               <h2>Evidence</h2>
               <dl className="facts">
                 <dt>Driver</dt>
-                <dd>{result.driver ? <Link to="/drivers">{result.driver.name}</Link> : "—"}
+                <dd>{result.driver ? <Link to="/fleet?tab=people">{result.driver.name}</Link> : "—"}
                   {result.driver && <span className="muted small"> · {percent(result.driver.similarity)} match in {result.driver.frames} frame(s)</span>}</dd>
                 <dt>Vehicle</dt>
-                <dd>{result.vehicle ? <Link to="/vehicles">{result.vehicle.plate_number}</Link> : "—"}
+                <dd>{result.vehicle ? <Link to="/fleet">{result.vehicle.plate_number}</Link> : "—"}
                   {result.vehicle && <span className="muted small"> · read {result.vehicle.reads}×</span>}</dd>
                 <dt>Faces</dt>
                 <dd>{result.faces_seen} seen, {result.unknown_faces} unknown</dd>

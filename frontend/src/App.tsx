@@ -6,7 +6,7 @@ import { ConnectPage, LoginPage, SetupPage } from "./pages/Auth";
 import { AnalyzePage } from "./pages/Analyze";
 import { JobDetailPage } from "./pages/JobDetail";
 import { AccessLogPage, AlertsPage, JobsPage } from "./pages/Records";
-import { DriversPage, VehiclesPage } from "./pages/Fleet";
+import { FleetPage } from "./pages/Fleet";
 import { SettingsPage } from "./pages/Settings";
 import { LivePage } from "./pages/Live";
 import { CamerasPage } from "./pages/Cameras";
@@ -46,8 +46,9 @@ function Gate() {
         <Route path="/jobs/:id" element={<AdminOnly><JobDetailPage /></AdminOnly>} />
         <Route path="/access" element={<AccessLogPage />} />
         <Route path="/alerts" element={<AlertsPage />} />
-        <Route path="/drivers" element={<DriversPage />} />
-        <Route path="/vehicles" element={<VehiclesPage />} />
+        <Route path="/fleet" element={<FleetPage />} />
+        <Route path="/drivers" element={<Navigate to="/fleet?tab=people" replace />} />
+        <Route path="/vehicles" element={<Navigate to="/fleet" replace />} />
         <Route path="/users" element={<AdminOnly><UsersPage /></AdminOnly>} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Home />} />
