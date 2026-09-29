@@ -33,9 +33,16 @@ public:
     std::vector<Vehicle> listVehicles();
     std::optional<Vehicle> getVehicle(int64_t id);
     std::optional<Vehicle> vehicleByPlate(const std::string& normalized);
+    std::optional<Vehicle> vehicleByAuthCode(const std::string& code);
     int64_t createVehicle(const Vehicle& v);
     bool updateVehicle(const Vehicle& v);
     bool deleteVehicle(int64_t id);
+
+    // Atomically creates a vehicle together with its owner (a new driver, expected to
+    // have isOwner already set), auto-assigns the owner, and stamps the given code.
+    int64_t createVehicleWithOwner(const Vehicle& v, const Driver& owner, const std::string& code);
+    // Same owner-creation + assignment + code, against an existing (ownerless) vehicle.
+    void setVehicleOwner(int64_t vehicleId, const Driver& owner, const std::string& code);
 
     bool assign(int64_t driverId, int64_t vehicleId);
     bool unassign(int64_t driverId, int64_t vehicleId);

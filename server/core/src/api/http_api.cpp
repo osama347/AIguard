@@ -199,6 +199,36 @@ void checkSetupCode(const std::string& given) {
     }
 }
 
+// Wrong authorization-code guesses are throttled the same way as the setup code
+// (5 per 5 minutes): the code is much shorter than a password.
+class RateLimiter {
+public:
+    void guard() {
+        std::lock_guard<std::mutex> lk(m_);
+        resetIfExpired();
+        if (failures_ >= 5) throw ForbiddenError("too many wrong codes; wait a few minutes and try again");
+    }
+    void fail() {
+        std::lock_guard<std::mutex> lk(m_);
+        resetIfExpired();
+        ++failures_;
+    }
+
+private:
+    void resetIfExpired() {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - windowStart_ > std::chrono::minutes(5)) { failures_ = 0; windowStart_ = now; }
+    }
+    std::mutex m_;
+    int failures_ = 0;
+    std::chrono::steady_clock::time_point windowStart_;
+};
+
+RateLimiter& authCodeLimiter() {
+    static RateLimiter r;
+    return r;
+}
+
 std::string trimmed(std::string v) {
     const auto ws = [](unsigned char c) { return std::isspace(c) != 0; };
     while (!v.empty() && ws(v.back())) v.pop_back();
@@ -537,24 +567,30 @@ void registerApi(httplib::Server& svr, ApiDeps d) {
     // ------------------------------------------------------------ vehicles
     svr.Get("/api/v1/vehicles", [deps, requireUser](const Req& req, Res& res) {
         guarded(res, [&] {
-            requireUser(req);
+            User u = requireUser(req);
             json arr = json::array();
-            for (const auto& x : deps->fleet.listVehicles()) arr.push_back(toJson(x));
+            for (const auto& x : deps->fleet.listVehicles()) arr.push_back(toJson(x, u.isAdmin()));
             sendJson(res, {{"items", arr}});
         });
     });
 
+    // Every new vehicle must have an owner: it's created together with the vehicle
+    // (atomically), never added afterwards through this endpoint.
     svr.Post("/api/v1/vehicles", [deps, requireAdmin](const Req& req, Res& res) {
         guarded(res, [&] {
             User u = requireAdmin(req);
-            sendJson(res, toJson(deps->fleet.createVehicle(vehicleFromJson(parseBody(req)), u.username)), 201);
+            json b = parseBody(req);
+            if (!b.contains("owner") || !b["owner"].is_object())
+                throw ValidationError("owner is required when registering a new vehicle");
+            auto vehicle = deps->fleet.createVehicleWithOwner(vehicleFromJson(b), driverFromJson(b["owner"]), u.username);
+            sendJson(res, toJson(vehicle, true), 201);
         });
     });
 
     svr.Get(R"(/api/v1/vehicles/(\d+))", [deps, requireUser](const Req& req, Res& res) {
         guarded(res, [&] {
-            requireUser(req);
-            sendJson(res, toJson(deps->fleet.getVehicle(idParam(req))));
+            User u = requireUser(req);
+            sendJson(res, toJson(deps->fleet.getVehicle(idParam(req)), u.isAdmin()));
         });
     });
 
@@ -562,7 +598,7 @@ void registerApi(httplib::Server& svr, ApiDeps d) {
         guarded(res, [&] {
             User u = requireAdmin(req);
             Vehicle current = deps->fleet.getVehicle(idParam(req));
-            sendJson(res, toJson(deps->fleet.updateVehicle(vehicleFromJson(parseBody(req), current), u.username)));
+            sendJson(res, toJson(deps->fleet.updateVehicle(vehicleFromJson(parseBody(req), current), u.username), true));
         });
     });
 
@@ -571,6 +607,35 @@ void registerApi(httplib::Server& svr, ApiDeps d) {
             User u = requireAdmin(req);
             deps->fleet.deleteVehicle(idParam(req), u.username);
             res.status = 204;
+        });
+    });
+
+    // Backfills an owner (+ authorization code) onto a legacy vehicle that predates
+    // this feature. Rejects if the vehicle already has one.
+    svr.Put(R"(/api/v1/vehicles/(\d+)/owner)", [deps, requireAdmin](const Req& req, Res& res) {
+        guarded(res, [&] {
+            User u = requireAdmin(req);
+            auto vehicle = deps->fleet.setVehicleOwner(idParam(req), driverFromJson(parseBody(req)), u.username);
+            sendJson(res, toJson(vehicle, true));
+        });
+    });
+
+    // Redeems an owner's authorization code to add a new authorized (non-owner) driver
+    // to their vehicle, without needing the owner present. Wrong-code attempts are
+    // rate-limited the same way as the setup code.
+    svr.Post("/api/v1/drivers/authorize", [deps, requireAdmin](const Req& req, Res& res) {
+        guarded(res, [&] {
+            User u = requireAdmin(req);
+            authCodeLimiter().guard();
+            json b = parseBody(req);
+            Vehicle v;
+            try {
+                v = deps->fleet.findVehicleByAuthCode(b.value("code", ""));
+            } catch (const NotFoundError&) {
+                authCodeLimiter().fail();
+                throw ValidationError("authorization code not recognized");
+            }
+            sendJson(res, toJson(deps->fleet.authorizeDriverForVehicle(v.id, driverFromJson(b), u.username)), 201);
         });
     });
 

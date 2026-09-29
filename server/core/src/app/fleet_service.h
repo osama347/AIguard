@@ -46,6 +46,19 @@ public:
     Vehicle updateVehicle(Vehicle v, const std::string& actor);
     void deleteVehicle(int64_t id, const std::string& actor);
 
+    // Registers a vehicle together with its owner: the owner is created as a driver
+    // (auto-enrolled, is_owner=true), auto-assigned, and given a fresh authorization
+    // code, all atomically. Owner name/phone are validated the same as any driver,
+    // plus phone is mandatory.
+    Vehicle createVehicleWithOwner(Vehicle v, Driver owner, const std::string& actor);
+    // Backfills an owner (same validation/atomicity) onto a vehicle that doesn't have one yet.
+    Vehicle setVehicleOwner(int64_t vehicleId, Driver owner, const std::string& actor);
+    // Resolves an authorization code to its vehicle; throws NotFoundError if unrecognized
+    // (callers should rate-limit on that, the code space is much smaller than a password).
+    Vehicle findVehicleByAuthCode(const std::string& code);
+    // Adds a new authorized (non-owner) driver to a vehicle already resolved from a code.
+    Driver authorizeDriverForVehicle(int64_t vehicleId, Driver d, const std::string& actor);
+
     void assign(int64_t driverId, int64_t vehicleId, const std::string& actor);
     void unassign(int64_t driverId, int64_t vehicleId, const std::string& actor);
 

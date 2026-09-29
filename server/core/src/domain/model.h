@@ -9,6 +9,7 @@ namespace guard {
 
 struct VehicleRef { int64_t id = 0; std::string plateNumber; };
 struct DriverRef { int64_t id = 0; std::string name; };
+struct OwnerRef { int64_t id = 0; std::string name; std::string phone; };
 
 struct Driver {
     int64_t id = 0;
@@ -16,6 +17,7 @@ struct Driver {
     std::string status = "active";   // active | inactive | blacklisted
     std::string phone;
     std::string notes;
+    bool isOwner = false;            // auto-enrolled owner of a vehicle; set once, at creation
     std::string createdAt, updatedAt;
     int templateCount = 0;
     std::vector<VehicleRef> vehicles;
@@ -27,6 +29,8 @@ struct Vehicle {
     std::string plateNormalized;
     std::string make, model, color;
     std::string status = "active";   // active | inactive | blacklisted
+    std::optional<OwnerRef> owner;           // every vehicle has exactly one, except legacy pre-migration rows
+    std::optional<std::string> authCode;     // reusable; lets an admin authorize further drivers later
     std::string createdAt, updatedAt;
     std::vector<DriverRef> drivers;
 };

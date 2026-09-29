@@ -11,7 +11,9 @@ namespace guard {
 nlohmann::json isoTime(const std::string& sqliteTime);
 
 nlohmann::json toJson(const Driver& d);
-nlohmann::json toJson(const Vehicle& v);
+// auth_code is a credential, not a display fact: only included when includeAuthCode
+// is true (admins). Regular drivers/guards get owner name/phone but not the code.
+nlohmann::json toJson(const Vehicle& v, bool includeAuthCode = false);
 nlohmann::json toJson(const Job& j, int queuePosition = -1);
 nlohmann::json toJson(const Camera& c);
 nlohmann::json toJson(const AccessEvent& e);

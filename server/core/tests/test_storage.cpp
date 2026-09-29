@@ -62,6 +62,78 @@ TEST(fleet_crud_and_assignments) {
     CHECK(repo.assignments().empty());                        // cascaded
 }
 
+TEST(vehicle_owner_created_atomically_and_auto_assigned) {
+    TempDb t;
+    FleetRepository repo(*t.db);
+    Vehicle v;
+    v.plateNumber = "OWN 001";
+    v.plateNormalized = "OWN001";
+    Driver owner;
+    owner.name = "Fatima";
+    owner.phone = "+92 300 1234567";
+    owner.isOwner = true;
+
+    const int64_t vid = repo.createVehicleWithOwner(v, owner, "ABCD-2345");
+
+    auto stored = repo.getVehicle(vid);
+    CHECK(stored.has_value());
+    CHECK(stored->owner.has_value());
+    CHECK_EQ(stored->owner->name, std::string("Fatima"));
+    CHECK_EQ(stored->owner->phone, std::string("+92 300 1234567"));
+    CHECK(stored->authCode.has_value());
+    CHECK_EQ(*stored->authCode, std::string("ABCD-2345"));
+
+    // Owner is auto-assigned (auto-enrolled as a driver of their own vehicle).
+    CHECK_EQ(stored->drivers.size(), std::size_t(1));
+    CHECK_EQ(stored->drivers[0].name, std::string("Fatima"));
+
+    auto ownerDriver = repo.getDriver(stored->owner->id);
+    CHECK(ownerDriver.has_value());
+    CHECK(ownerDriver->isOwner);
+}
+
+TEST(vehicle_by_auth_code_and_uniqueness) {
+    TempDb t;
+    FleetRepository repo(*t.db);
+    Vehicle v1; v1.plateNumber = "COD 001"; v1.plateNormalized = "COD001";
+    Driver o1; o1.name = "A"; o1.phone = "111-2223333"; o1.isOwner = true;
+    repo.createVehicleWithOwner(v1, o1, "WXYZ-1111");
+
+    CHECK(repo.vehicleByAuthCode("WXYZ-1111").has_value());
+    CHECK_EQ(repo.vehicleByAuthCode("WXYZ-1111")->plateNormalized, std::string("COD001"));
+    CHECK(!repo.vehicleByAuthCode("NOPE-0000").has_value());
+
+    // A duplicate code must be rejected (surfaces to the service layer as a
+    // regenerate-and-retry signal, not a user-facing conflict).
+    Vehicle v2; v2.plateNumber = "COD 002"; v2.plateNormalized = "COD002";
+    Driver o2; o2.name = "B"; o2.phone = "222-3334444"; o2.isOwner = true;
+    CHECK_THROWS(repo.createVehicleWithOwner(v2, o2, "WXYZ-1111"), DbConstraintError);
+}
+
+TEST(vehicle_without_owner_stays_null_and_can_be_backfilled) {
+    TempDb t;
+    FleetRepository repo(*t.db);
+    Vehicle v;
+    v.plateNumber = "LEG 001";
+    v.plateNormalized = "LEG001";
+    const int64_t vid = repo.createVehicle(v);   // legacy path: no owner, like pre-migration data
+
+    auto stored = repo.getVehicle(vid);
+    CHECK(!stored->owner.has_value());
+    CHECK(!stored->authCode.has_value());
+
+    Driver owner;
+    owner.name = "Backfilled Owner";
+    owner.phone = "333-4445555";
+    owner.isOwner = true;
+    repo.setVehicleOwner(vid, owner, "LATE-0001");
+
+    stored = repo.getVehicle(vid);
+    CHECK(stored->owner.has_value());
+    CHECK_EQ(stored->owner->name, std::string("Backfilled Owner"));
+    CHECK_EQ(*stored->authCode, std::string("LATE-0001"));
+}
+
 TEST(face_templates_roundtrip_and_cascade) {
     TempDb t;
     FleetRepository repo(*t.db);

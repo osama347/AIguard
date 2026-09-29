@@ -85,7 +85,13 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create the first admin account (only while no user exists; only from the device itself) */
+        /**
+         * Create the first admin account (only while no user exists)
+         * @description From the device itself no code is needed. From another machine the body must carry
+         *     `setup_code` (the one-time code the installer generated in `/etc/guard/guard.env`);
+         *     wrong codes are throttled. An optional `community` object saves the community profile
+         *     in the same call.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -95,7 +101,7 @@ export interface paths {
             };
             requestBody: {
                 content: {
-                    "application/json": components["schemas"]["Credentials"];
+                    "application/json": components["schemas"]["SetupRequest"];
                 };
             };
             responses: {
@@ -113,6 +119,152 @@ export interface paths {
             };
         };
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/community": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Community profile (public, so the login screen can show it) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Community"];
+                    };
+                };
+            };
+        };
+        /** Update the community profile (admin) */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CommunityInput"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Community"];
+                    };
+                };
+                400: components["responses"]["Error"];
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/community/logo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Community logo image (public) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description PNG */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "image/*": string;
+                    };
+                };
+                404: components["responses"]["Error"];
+            };
+        };
+        /** Replace the logo (admin; multipart field `logo`, PNG/JPEG/WebP, max 2 MB) */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "multipart/form-data": {
+                        /** Format: binary */
+                        logo: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Community"];
+                    };
+                };
+                400: components["responses"]["Error"];
+            };
+        };
+        post?: never;
+        /** Remove the logo (admin) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Community"];
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -751,7 +903,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Create a vehicle (admin) */
+        /** Register a vehicle together with its owner (admin). Owner is required and created atomically. */
         post: {
             parameters: {
                 query?: never;
@@ -774,6 +926,8 @@ export interface paths {
                         "application/json": components["schemas"]["Vehicle"];
                     };
                 };
+                /** @description Missing/invalid owner */
+                400: components["responses"]["Error"];
                 409: components["responses"]["Error"];
             };
         };
@@ -815,7 +969,7 @@ export interface paths {
                 };
             };
         };
-        /** Update a vehicle (admin; omitted fields are kept) */
+        /** Update a vehicle (admin; omitted fields are kept). Does not change the owner. */
         put: {
             parameters: {
                 query?: never;
@@ -864,6 +1018,99 @@ export interface paths {
                 };
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vehicles/{id}/owner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Set the owner on a vehicle that doesn't have one yet (admin). For backfilling vehicles created before this feature existed. */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["Id"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["OwnerInput"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Vehicle"];
+                    };
+                };
+                /** @description Vehicle already has an owner */
+                409: components["responses"]["Error"];
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/drivers/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Redeem an owner's authorization code to add a new authorized (non-owner) driver to their vehicle (admin) — the owner doesn't need to be present. Wrong-code attempts are rate-limited (5 per 5 minutes), same as the first-run setup code. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DriverInput"] & {
+                        /** @description e.g. XXXX-XXXX */
+                        code: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Driver"];
+                    };
+                };
+                /** @description Code not recognized */
+                400: components["responses"]["Error"];
+                /** @description Too many wrong codes */
+                403: components["responses"]["Error"];
+            };
+        };
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1703,6 +1950,35 @@ export interface components {
         };
         /** @enum {string} */
         Status: "active" | "inactive" | "blacklisted";
+        SetupRequest: {
+            username: string;
+            password: string;
+            /** @description Required when not called from the device itself */
+            setup_code?: string;
+            community?: components["schemas"]["CommunityInput"];
+        };
+        CommunityInput: {
+            name?: string;
+            address?: string;
+            city?: string;
+            country?: string;
+            helpline?: string;
+            email?: string;
+            website?: string;
+        };
+        Community: {
+            /** @description true once the community has a name */
+            configured: boolean;
+            name: string;
+            address: string;
+            city: string;
+            country: string;
+            helpline: string;
+            email: string;
+            website: string;
+            /** @description Server-relative URL of the logo */
+            logo_url: string | null;
+        };
         Health: {
             /** @enum {string} */
             status: "ok" | "degraded";
@@ -1920,6 +2196,12 @@ export interface components {
             phone?: string;
             notes?: string;
         };
+        OwnerInput: {
+            name: string;
+            /** @description Mandatory: mobile/WhatsApp number, 7-15 digits */
+            phone: string;
+            notes?: string;
+        };
         Driver: {
             /** Format: int64 */
             id: number;
@@ -1927,6 +2209,8 @@ export interface components {
             status: components["schemas"]["Status"];
             phone: string;
             notes: string;
+            /** @description Auto-enrolled owner of a vehicle; set once, at creation */
+            is_owner: boolean;
             photo_count: number;
             vehicles: {
                 /** Format: int64 */
@@ -1957,6 +2241,8 @@ export interface components {
             model?: string;
             color?: string;
             status?: components["schemas"]["Status"];
+            /** @description Required when creating a new vehicle (not used on update): the owner is created as a driver, auto-enrolled and authorized for this vehicle, in the same atomic request. Ignored by PUT /vehicles/{id} — see PUT /vehicles/{id}/owner to set an owner on a vehicle that doesn't have one yet. */
+            owner?: components["schemas"]["OwnerInput"];
         };
         Vehicle: {
             /** Format: int64 */
@@ -1973,6 +2259,15 @@ export interface components {
                 id: number;
                 name: string;
             }[];
+            /** @description null only for a vehicle created before this feature existed and not yet backfilled */
+            owner: {
+                /** Format: int64 */
+                id: number;
+                name: string;
+                phone: string;
+            } | null;
+            /** @description Admin-only (omitted entirely for guards): the owner's reusable code, redeemed via POST /drivers/authorize */
+            auth_code?: string | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */

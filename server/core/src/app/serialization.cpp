@@ -15,16 +15,21 @@ json toJson(const Driver& d) {
     json vehicles = json::array();
     for (const auto& v : d.vehicles) vehicles.push_back({{"id", v.id}, {"plate_number", v.plateNumber}});
     return {{"id", d.id}, {"name", d.name}, {"status", d.status}, {"phone", d.phone}, {"notes", d.notes},
-            {"photo_count", d.templateCount}, {"vehicles", vehicles},
+            {"is_owner", d.isOwner}, {"photo_count", d.templateCount}, {"vehicles", vehicles},
             {"created_at", isoTime(d.createdAt)}, {"updated_at", isoTime(d.updatedAt)}};
 }
 
-json toJson(const Vehicle& v) {
+json toJson(const Vehicle& v, bool includeAuthCode) {
     json drivers = json::array();
     for (const auto& d : v.drivers) drivers.push_back({{"id", d.id}, {"name", d.name}});
-    return {{"id", v.id}, {"plate_number", v.plateNumber}, {"plate_normalized", v.plateNormalized},
-            {"make", v.make}, {"model", v.model}, {"color", v.color}, {"status", v.status},
-            {"drivers", drivers}, {"created_at", isoTime(v.createdAt)}, {"updated_at", isoTime(v.updatedAt)}};
+    json owner = nullptr;
+    if (v.owner) owner = {{"id", v.owner->id}, {"name", v.owner->name}, {"phone", v.owner->phone}};
+    json j = {{"id", v.id}, {"plate_number", v.plateNumber}, {"plate_normalized", v.plateNormalized},
+              {"make", v.make}, {"model", v.model}, {"color", v.color}, {"status", v.status},
+              {"drivers", drivers}, {"owner", owner},
+              {"created_at", isoTime(v.createdAt)}, {"updated_at", isoTime(v.updatedAt)}};
+    if (includeAuthCode) j["auth_code"] = v.authCode ? json(*v.authCode) : json(nullptr);
+    return j;
 }
 
 json toJson(const Job& j, int queuePosition) {

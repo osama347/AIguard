@@ -4,6 +4,7 @@ import { api, subscribe, type Dashboard } from "../api/client";
 import { CAMERA_STATE, formatBytes, formatRelative, STATUS_TONE } from "../lib/format";
 import { VerdictColumns, VerdictLegend, VerdictTable } from "../components/VerdictColumns";
 import { Badge, ErrorBox, PageHeader, Spinner } from "../components/ui";
+import { RegisterVehicleWizard } from "./Fleet";
 
 // ------------------------------------------------------------------ formatting
 
@@ -102,10 +103,7 @@ export function DashboardPage() {
     }
   }), [load]);
 
-  const registerPlate = async (plate: string) => {
-    if (!confirm(`Register vehicle ${plate}? You can add make, model and drivers afterwards on the Vehicles page.`)) return;
-    try { await api.createVehicle({ plate_number: plate }); load(); } catch (e) { alert((e as Error).message); }
-  };
+  const [registeringPlate, setRegisteringPlate] = useState<string | null>(null);
   const ack = async (id: number) => {
     try { await api.acknowledgeAlert(id); load(); } catch (e) { alert((e as Error).message); }
   };
@@ -202,7 +200,7 @@ export function DashboardPage() {
                       <td className="mono"><strong>{p.plate}</strong></td>
                       <td className="num">{p.count}×</td>
                       <td className="muted small">{formatRelative(p.last_seen)}{p.camera ? ` · ${p.camera}` : ""}</td>
-                      <td className="num"><button className="btn btn-small" onClick={() => registerPlate(p.plate)}>Register</button></td>
+                      <td className="num"><button className="btn btn-small" onClick={() => setRegisteringPlate(p.plate)}>Register</button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -271,6 +269,10 @@ export function DashboardPage() {
           </dl>
         </section>
       </div>
+      {registeringPlate && (
+        <RegisterVehicleWizard initialPlate={registeringPlate} onClose={() => setRegisteringPlate(null)}
+          onDone={() => { setRegisteringPlate(null); load(); }} />
+      )}
     </>
   );
 }

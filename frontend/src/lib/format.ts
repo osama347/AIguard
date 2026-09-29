@@ -70,3 +70,39 @@ export function formatClock(iso: string | null | undefined): string {
 
 export const IMAGE_EXT = /\.(jpe?g|png|bmp|webp)$/i;
 export const isImageName = (name?: string | null) => !!name && IMAGE_EXT.test(name);
+
+// Pragmatic check, matching the server's: optional leading '+', digits/spaces/dashes,
+// 7-15 digits overall. Not full E.164 validation, just enough to catch typos early.
+const PHONE_SHAPE = /^\+?[\d\s-]+$/;
+export function isValidPhone(phone: string): boolean {
+  const p = phone.trim();
+  if (!PHONE_SHAPE.test(p)) return false;
+  const digits = p.replace(/[^\d]/g, "").length;
+  return digits >= 7 && digits <= 15;
+}
+
+/** wa.me deep link that opens a chat pre-filled with the code — no WhatsApp API integration needed. */
+export function whatsAppShareUrl(phone: string, text: string): string {
+  const digits = phone.replace(/[^\d]/g, "");
+  return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
+}
+
+/** The Clipboard API needs a secure context (HTTPS or localhost); this app is typically
+ *  served over plain HTTP on the LAN, where navigator.clipboard is undefined. Falls back
+ *  to the classic textarea-select-execCommand trick, which works on plain HTTP too. */
+export async function copyToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    try { await navigator.clipboard.writeText(text); return true; } catch { /* fall through */ }
+  }
+  const el = document.createElement("textarea");
+  el.value = text;
+  el.style.position = "fixed";
+  el.style.opacity = "0";
+  document.body.appendChild(el);
+  el.focus();
+  el.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { ok = false; }
+  document.body.removeChild(el);
+  return ok;
+}

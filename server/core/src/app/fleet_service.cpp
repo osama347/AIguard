@@ -1,6 +1,8 @@
 #include "app/fleet_service.h"
 #include "app/errors.h"
 #include "domain/plate.h"
+#include "infra/crypto.h"
+#include <cctype>
 
 namespace guard {
 
@@ -43,6 +45,46 @@ void validateVehicle(Vehicle& v) {
     validateStatus(v.status);
 }
 
+// A driver, but phone is mandatory (unlike drivers in general): this is how an admin
+// reaches the owner, and how the authorization code gets shared with them.
+void validateOwner(Driver& owner) {
+    validateDriver(owner);
+    const std::string p = trimmed(owner.phone);
+    if (p.empty()) throw ValidationError("owner phone/WhatsApp number is required");
+    // Pragmatic check, not a full E.164 library: optional leading '+', digits/spaces/dashes,
+    // 7-15 digits overall.
+    int digits = 0;
+    for (std::size_t i = 0; i < p.size(); ++i) {
+        const char c = p[i];
+        if (c == '+' && i == 0) continue;
+        if (c == ' ' || c == '-') continue;
+        if (std::isdigit(static_cast<unsigned char>(c))) { ++digits; continue; }
+        throw ValidationError("owner phone must contain only digits, spaces, dashes and an optional leading +");
+    }
+    if (digits < 7 || digits > 15) throw ValidationError("owner phone must have 7-15 digits");
+    owner.phone = p;
+}
+
+// Short, human-shareable code (read aloud, pasted into WhatsApp): 8 symbols from an
+// alphabet without visually ambiguous characters (0/O, 1/I/L), shown as "XXXX-XXXX".
+// Not a login secret like a password, so no iteration/hashing — just enough entropy
+// (32^8) that guessing is impractical, backed by the redemption rate limit in the API layer.
+std::string generateAuthCode() {
+    static const char* kAlphabet = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+    const auto bytes = crypto::randomBytes(8);
+    std::string code;
+    for (auto b : bytes) code += kAlphabet[b % 32];
+    return code.substr(0, 4) + "-" + code.substr(4);
+}
+
+bool isAuthCodeCollision(const DbConstraintError& e) {
+    return std::string(e.what()).find("auth_code") != std::string::npos;
+}
+
+bool isPlateCollision(const DbConstraintError& e) {
+    return std::string(e.what()).find("plate_normalized") != std::string::npos;
+}
+
 } // namespace
 
 FleetService::FleetService(FleetRepository& fleet, EventRepository& events, InferenceClient& inference,
@@ -73,6 +115,8 @@ Driver FleetService::updateDriver(Driver d, const std::string& actor) {
 }
 
 void FleetService::deleteDriver(int64_t id, const std::string& actor) {
+    Driver d = getDriver(id);   // 404 if missing
+    if (d.isOwner) throw ConflictError("reassign or delete their vehicle first: " + d.name + " owns a vehicle");
     if (!fleet_.deleteDriver(id)) throw NotFoundError("driver " + std::to_string(id) + " not found");
     events_.audit(actor, "delete", "driver", std::to_string(id));
     invalidate();
@@ -146,6 +190,49 @@ Vehicle FleetService::createVehicle(Vehicle v, const std::string& actor) {
     return getVehicle(id);
 }
 
+Vehicle FleetService::createVehicleWithOwner(Vehicle v, Driver owner, const std::string& actor) {
+    validateVehicle(v);
+    validateOwner(owner);
+    owner.isOwner = true;
+
+    int64_t id = 0;
+    for (int attempt = 0; ; ++attempt) {
+        const std::string code = generateAuthCode();
+        try {
+            id = fleet_.createVehicleWithOwner(v, owner, code);
+            break;
+        } catch (const DbConstraintError& e) {
+            if (isAuthCodeCollision(e) && attempt < 4) continue;   // astronomically rare; retry with a fresh code
+            if (isPlateCollision(e)) throw ConflictError("a vehicle with plate " + v.plateNormalized + " already exists");
+            throw;
+        }
+    }
+    invalidate();
+    events_.audit(actor, "create", "vehicle", std::to_string(id), v.plateNormalized + " owner=" + owner.name);
+    return getVehicle(id);
+}
+
+Vehicle FleetService::setVehicleOwner(int64_t vehicleId, Driver owner, const std::string& actor) {
+    Vehicle v = getVehicle(vehicleId);   // 404 if missing
+    if (v.owner) throw ConflictError("vehicle already has an owner");
+    validateOwner(owner);
+    owner.isOwner = true;
+
+    for (int attempt = 0; ; ++attempt) {
+        const std::string code = generateAuthCode();
+        try {
+            fleet_.setVehicleOwner(vehicleId, owner, code);
+            break;
+        } catch (const DbConstraintError& e) {
+            if (isAuthCodeCollision(e) && attempt < 4) continue;
+            throw;
+        }
+    }
+    invalidate();
+    events_.audit(actor, "set_owner", "vehicle", std::to_string(vehicleId), owner.name);
+    return getVehicle(vehicleId);
+}
+
 Vehicle FleetService::updateVehicle(Vehicle v, const std::string& actor) {
     validateVehicle(v);
     try {
@@ -176,6 +263,23 @@ void FleetService::unassign(int64_t driverId, int64_t vehicleId, const std::stri
     if (!fleet_.unassign(driverId, vehicleId)) throw NotFoundError("assignment not found");
     invalidate();
     events_.audit(actor, "unassign", "driver", std::to_string(driverId), "vehicle " + std::to_string(vehicleId));
+}
+
+Vehicle FleetService::findVehicleByAuthCode(const std::string& code) {
+    auto v = fleet_.vehicleByAuthCode(trimmed(code));
+    if (!v) throw NotFoundError("authorization code not recognized");
+    return *v;
+}
+
+Driver FleetService::authorizeDriverForVehicle(int64_t vehicleId, Driver d, const std::string& actor) {
+    getVehicle(vehicleId);   // 404 if the vehicle went away between resolving the code and this call
+    validateDriver(d);
+    d.isOwner = false;
+    const int64_t id = fleet_.createDriver(d);
+    fleet_.assign(id, vehicleId);
+    invalidate();
+    events_.audit(actor, "authorize", "driver", std::to_string(id), d.name + " for vehicle " + std::to_string(vehicleId));
+    return getDriver(id);
 }
 
 // ---------------------------------------------------------------- matching

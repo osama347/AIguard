@@ -90,7 +90,7 @@ void CommunityRepository::save(const Community& c) {
 namespace {
 
 const char* kDriverCols =
-    "d.id, d.name, d.status, d.phone, d.notes, d.created_at, d.updated_at, "
+    "d.id, d.name, d.status, d.phone, d.notes, d.is_owner, d.created_at, d.updated_at, "
     "(SELECT COUNT(*) FROM face_templates t WHERE t.driver_id = d.id)";
 
 Driver readDriver(Stmt& st) {
@@ -100,14 +100,17 @@ Driver readDriver(Stmt& st) {
     d.status = st.text(2);
     d.phone = st.text(3);
     d.notes = st.text(4);
-    d.createdAt = st.text(5);
-    d.updatedAt = st.text(6);
-    d.templateCount = static_cast<int>(st.i64(7));
+    d.isOwner = st.i64(5) != 0;
+    d.createdAt = st.text(6);
+    d.updatedAt = st.text(7);
+    d.templateCount = static_cast<int>(st.i64(8));
     return d;
 }
 
 const char* kVehicleCols =
-    "id, plate_number, plate_normalized, make, model, color, status, created_at, updated_at";
+    "v.id, v.plate_number, v.plate_normalized, v.make, v.model, v.color, v.status, "
+    "v.created_at, v.updated_at, v.auth_code, o.id, o.name, o.phone";
+const char* kVehicleFrom = "FROM vehicles v LEFT JOIN drivers o ON o.id = v.owner_id";
 
 Vehicle readVehicle(Stmt& st) {
     Vehicle v;
@@ -120,6 +123,8 @@ Vehicle readVehicle(Stmt& st) {
     v.status = st.text(6);
     v.createdAt = st.text(7);
     v.updatedAt = st.text(8);
+    if (!st.isNull(9)) v.authCode = st.text(9);
+    if (!st.isNull(10)) v.owner = OwnerRef{st.i64(10), st.text(11), st.text(12)};
     return v;
 }
 
@@ -160,8 +165,8 @@ std::optional<Driver> FleetRepository::getDriver(int64_t id) {
 
 int64_t FleetRepository::createDriver(const Driver& d) {
     auto lk = db_.lock();
-    Stmt st(db_, "INSERT INTO drivers(name, status, phone, notes) VALUES(?, ?, ?, ?)");
-    st.bind(1, d.name).bind(2, d.status).bind(3, d.phone).bind(4, d.notes).run();
+    Stmt st(db_, "INSERT INTO drivers(name, status, phone, notes, is_owner) VALUES(?, ?, ?, ?, ?)");
+    st.bind(1, d.name).bind(2, d.status).bind(3, d.phone).bind(4, d.notes).bind(5, d.isOwner ? 1 : 0).run();
     return db_.lastInsertId();
 }
 
@@ -216,7 +221,7 @@ std::vector<Identity> FleetRepository::identities(const std::string& modelVersio
 std::vector<Vehicle> FleetRepository::listVehicles() {
     auto lk = db_.lock();
     std::vector<Vehicle> out;
-    Stmt st(db_, std::string("SELECT ") + kVehicleCols + " FROM vehicles ORDER BY plate_normalized");
+    Stmt st(db_, std::string("SELECT ") + kVehicleCols + " " + kVehicleFrom + " ORDER BY v.plate_normalized");
     while (st.step()) out.push_back(readVehicle(st));
     for (auto& v : out) loadVehicleDrivers(v);
     return out;
@@ -224,7 +229,7 @@ std::vector<Vehicle> FleetRepository::listVehicles() {
 
 std::optional<Vehicle> FleetRepository::getVehicle(int64_t id) {
     auto lk = db_.lock();
-    Stmt st(db_, std::string("SELECT ") + kVehicleCols + " FROM vehicles WHERE id = ?");
+    Stmt st(db_, std::string("SELECT ") + kVehicleCols + " " + kVehicleFrom + " WHERE v.id = ?");
     st.bind(1, id);
     if (!st.step()) return std::nullopt;
     Vehicle v = readVehicle(st);
@@ -234,10 +239,20 @@ std::optional<Vehicle> FleetRepository::getVehicle(int64_t id) {
 
 std::optional<Vehicle> FleetRepository::vehicleByPlate(const std::string& normalized) {
     auto lk = db_.lock();
-    Stmt st(db_, std::string("SELECT ") + kVehicleCols + " FROM vehicles WHERE plate_normalized = ?");
+    Stmt st(db_, std::string("SELECT ") + kVehicleCols + " " + kVehicleFrom + " WHERE v.plate_normalized = ?");
     st.bind(1, normalized);
     if (!st.step()) return std::nullopt;
     return readVehicle(st);
+}
+
+std::optional<Vehicle> FleetRepository::vehicleByAuthCode(const std::string& code) {
+    auto lk = db_.lock();
+    Stmt st(db_, std::string("SELECT ") + kVehicleCols + " " + kVehicleFrom + " WHERE v.auth_code = ?");
+    st.bind(1, code);
+    if (!st.step()) return std::nullopt;
+    Vehicle v = readVehicle(st);
+    loadVehicleDrivers(v);
+    return v;
 }
 
 int64_t FleetRepository::createVehicle(const Vehicle& v) {
@@ -285,6 +300,29 @@ AssignmentSet FleetRepository::assignments() {
     Stmt st(db_, "SELECT driver_id, vehicle_id FROM assignments");
     while (st.step()) out.insert({st.i64(0), st.i64(1)});
     return out;
+}
+
+int64_t FleetRepository::createVehicleWithOwner(const Vehicle& v, const Driver& owner, const std::string& code) {
+    auto lk = db_.lock();
+    int64_t vehicleId = 0;
+    db_.transaction([&] {
+        vehicleId = createVehicle(v);
+        const int64_t ownerId = createDriver(owner);
+        assign(ownerId, vehicleId);
+        Stmt st(db_, "UPDATE vehicles SET owner_id = ?, auth_code = ? WHERE id = ?");
+        st.bind(1, ownerId).bind(2, code).bind(3, vehicleId).run();
+    });
+    return vehicleId;
+}
+
+void FleetRepository::setVehicleOwner(int64_t vehicleId, const Driver& owner, const std::string& code) {
+    auto lk = db_.lock();
+    db_.transaction([&] {
+        const int64_t ownerId = createDriver(owner);
+        assign(ownerId, vehicleId);
+        Stmt st(db_, "UPDATE vehicles SET owner_id = ?, auth_code = ? WHERE id = ?");
+        st.bind(1, ownerId).bind(2, code).bind(3, vehicleId).run();
+    });
 }
 
 // ======================================================================

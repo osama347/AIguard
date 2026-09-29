@@ -1,7 +1,8 @@
 import { Fragment } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useSession } from "../session";
-import { Badge, Brand } from "./ui";
+import { Brand } from "./ui";
+import { ConnectionStatus } from "./ConnectionStatus";
 
 // Guards see monitoring pages only; admins also manage the system.
 const NAV: { to: string; label: string; section?: string; admin?: boolean }[] = [
@@ -17,16 +18,6 @@ const NAV: { to: string; label: string; section?: string; admin?: boolean }[] = 
   { to: "/jobs", label: "Test results", admin: true },
   { to: "/settings", label: "Settings", section: "" },
 ];
-
-function EngineStatus() {
-  const { health, healthError } = useSession();
-  if (healthError) return <Badge tone="bad">Service offline</Badge>;
-  if (!health) return null;
-  const s = health.inference.status;
-  if (s === "ok") return <Badge tone="ok">AI engine ready</Badge>;
-  if (s === "loading") return <span title={health.inference.message}><Badge tone="warn">AI engine preparing…</Badge></span>;
-  return <span title={health.inference.message}><Badge tone="bad">AI engine {s}</Badge></span>;
-}
 
 export function Layout() {
   const { user, isAdmin, community, openAlerts, toasts, dismissToast } = useSession();
@@ -55,7 +46,7 @@ export function Layout() {
       </aside>
       <div className="main">
         <header className="topbar">
-          <EngineStatus />
+          <ConnectionStatus />
         </header>
         <main className="content">
           <Outlet />

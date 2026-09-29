@@ -166,6 +166,7 @@ input[type="checkbox"], input[type="radio"] { width: auto; padding: 0; border: 0
 .badge-bad { background: color-mix(in srgb, var(--bad) 15%, transparent); color: var(--bad); }
 .badge-warn { background: color-mix(in srgb, var(--warn) 17%, transparent); color: var(--warn); }
 .badge-info { background: color-mix(in srgb, var(--info) 15%, transparent); color: var(--info); }
+.badge-btn { background: none; border: none; padding: 0; cursor: pointer; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { border: 1px solid var(--line); background: var(--surface-2); border-radius: 6px; padding: 2px 8px; font-size: 12px; font-family: ui-monospace, monospace; }

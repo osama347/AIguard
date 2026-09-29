@@ -6,6 +6,9 @@ export type Driver = Schemas["Driver"];
 export type DriverInput = Schemas["DriverInput"];
 export type Vehicle = Schemas["Vehicle"];
 export type VehicleInput = Schemas["VehicleInput"];
+export type OwnerInput = Schemas["OwnerInput"];
+/** Registering a new vehicle always requires its owner, atomically (see api.createVehicle). */
+export type NewVehicleInput = VehicleInput & { owner: OwnerInput };
 export type Job = Schemas["Job"];
 export type JobResult = Schemas["JobResult"];
 export type Frame = Schemas["Frame"];
@@ -185,6 +188,7 @@ export const api = {
   deleteUser: (id: number) => del(`/users/${id}`),
 
   drivers: () => get<Schemas["DriverList"]>("/drivers").then((r) => r.items),
+  driver: (id: number) => get<Driver>(`/drivers/${id}`),
   createDriver: (d: DriverInput) => post<Driver>("/drivers", d),
   updateDriver: (id: number, d: DriverInput) => put<Driver>(`/drivers/${id}`, d),
   deleteDriver: (id: number) => del(`/drivers/${id}`),
@@ -196,11 +200,16 @@ export const api = {
   clearPhotos: (id: number) => del(`/drivers/${id}/photos`),
   assign: (driverId: number, vehicleId: number) => put<Driver>(`/drivers/${driverId}/vehicles/${vehicleId}`),
   unassign: (driverId: number, vehicleId: number) => del(`/drivers/${driverId}/vehicles/${vehicleId}`),
+  /** Redeems an owner's authorization code to add a new authorized driver to their vehicle. */
+  authorizeDriver: (code: string, d: DriverInput) => post<Driver>("/drivers/authorize", { code, ...d }),
 
   vehicles: () => get<Schemas["VehicleList"]>("/vehicles").then((r) => r.items),
-  createVehicle: (v: VehicleInput) => post<Vehicle>("/vehicles", v),
+  /** Registers a vehicle together with its owner, atomically; the owner is auto-enrolled and authorized. */
+  createVehicle: (v: NewVehicleInput) => post<Vehicle>("/vehicles", v),
   updateVehicle: (id: number, v: VehicleInput) => put<Vehicle>(`/vehicles/${id}`, v),
   deleteVehicle: (id: number) => del(`/vehicles/${id}`),
+  /** Backfills an owner onto a vehicle that doesn't have one yet (legacy, pre-migration data). */
+  setVehicleOwner: (vehicleId: number, owner: OwnerInput) => put<Vehicle>(`/vehicles/${vehicleId}/owner`, owner),
 
   jobs: (limit = 50, offset = 0) => get<Schemas["JobList"]>(`/jobs?limit=${limit}&offset=${offset}`).then((r) => r.items),
   job: (id: string) => get<Job>(`/jobs/${id}`),
