@@ -52,6 +52,7 @@ struct CoreConfig {
     std::string dbPath() const { return dataDir() + "/guard.db"; }
     std::string mediaDir() const { return dataDir() + "/media"; }
     std::string brandingDir() const { return mediaDir() + "/branding"; }
+    std::string portraitsDir() const { return mediaDir() + "/portraits"; }
     std::string snapshotsDir() const { return mediaDir() + "/snapshots"; }
     std::string dataDir() const { return paths.dataDir; }
 };

@@ -811,6 +811,99 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/drivers/{id}/photo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        /** Profile picture image (admin-only for now, unlike the community logo) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["Id"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description PNG */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "image/*": string;
+                    };
+                };
+                404: components["responses"]["Error"];
+            };
+        };
+        /** Set the profile picture (admin; multipart field `photo`, PNG/JPEG/WebP, max 2 MB) */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["Id"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "multipart/form-data": {
+                        /** Format: binary */
+                        photo: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Driver"];
+                    };
+                };
+                400: components["responses"]["Error"];
+            };
+        };
+        post?: never;
+        /** Remove the profile picture (admin) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["Id"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Driver"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/drivers/{id}/vehicles/{vehicleId}": {
         parameters: {
             query?: never;
@@ -2212,6 +2305,8 @@ export interface components {
             /** @description Auto-enrolled owner of a vehicle; set once, at creation */
             is_owner: boolean;
             photo_count: number;
+            /** @description Admin-only (omitted entirely for guards): profile picture, set via PUT /drivers/{id}/photo */
+            photo_url?: string | null;
             vehicles: {
                 /** Format: int64 */
                 id: number;

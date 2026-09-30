@@ -198,6 +198,13 @@ export const api = {
     return post<EnrollResult>(`/drivers/${id}/photos`, fd);
   },
   clearPhotos: (id: number) => del(`/drivers/${id}/photos`),
+  /** Profile picture (display only, admin-only for now) — separate from face-enrollment photos above. */
+  setDriverPhoto: (id: number, file: File) => {
+    const fd = new FormData();
+    fd.append("photo", file, file.name);
+    return put<Driver>(`/drivers/${id}/photo`, fd);
+  },
+  deleteDriverPhoto: (id: number) => request<Driver>("DELETE", `/drivers/${id}/photo`),
   assign: (driverId: number, vehicleId: number) => put<Driver>(`/drivers/${driverId}/vehicles/${vehicleId}`),
   unassign: (driverId: number, vehicleId: number) => del(`/drivers/${driverId}/vehicles/${vehicleId}`),
   /** Redeems an owner's authorization code to add a new authorized driver to their vehicle. */

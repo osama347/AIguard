@@ -209,6 +209,28 @@ paths:
       responses:
         "204": { description: Removed }
 
+  /drivers/{id}/photo:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: Profile picture image (admin-only for now, unlike the community logo)
+      responses:
+        "200": { description: PNG, JPEG or WebP image, content: { image/*: { schema: { type: string, format: binary } } } }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Set the profile picture (admin; multipart field `photo`, PNG/JPEG/WebP, max 2 MB)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { type: object, required: [photo], properties: { photo: { type: string, format: binary } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Driver" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+    delete:
+      summary: Remove the profile picture (admin)
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Driver" } } } }
+
   /drivers/{id}/vehicles/{vehicleId}:
     parameters:
       - { $ref: "#/components/parameters/Id" }
@@ -790,6 +812,10 @@ components:
         notes: { type: string }
         is_owner: { type: boolean, description: "Auto-enrolled owner of a vehicle; set once, at creation" }
         photo_count: { type: integer }
+        photo_url:
+          type: string
+          nullable: true
+          description: "Admin-only (omitted entirely for guards): profile picture, set via PUT /drivers/{id}/photo"
         vehicles:
           type: array
           items:

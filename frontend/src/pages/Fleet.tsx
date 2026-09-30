@@ -1,6 +1,6 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, type Driver, type EnrollResult, type Status, type Vehicle } from "../api/client";
+import { api, assetUrl, type Driver, type EnrollResult, type Status, type Vehicle } from "../api/client";
 import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session";
 import { STATUS_TONE, copyToClipboard, isValidPhone, whatsAppShareUrl } from "../lib/format";
@@ -59,10 +59,11 @@ function PeopleTab({ drivers, vehicles, isAdmin, onChanged }: {
           <div className="table-tools"><input placeholder="Search people…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Name</th><th>Status</th><th>Face photos</th><th>Vehicles</th><th>Phone</th></tr></thead>
+              <thead><tr>{isAdmin && <th></th>}<th>Name</th><th>Status</th><th>Face photos</th><th>Vehicles</th><th>Phone</th></tr></thead>
               <tbody>
                 {filtered.map((d) => (
                   <tr key={d.id} className="clickable" onClick={() => setEditing(d)}>
+                    {isAdmin && <td>{d.photo_url ? <img className="avatar" src={assetUrl(d.photo_url)} alt="" /> : <span className="avatar" />}</td>}
                     <td><strong>{d.name}</strong>{d.is_owner && <span className="muted small"> · Owner</span>}</td>
                     <td><Badge tone={STATUS_TONE[d.status]}>{d.status}</Badge></td>
                     <td>{d.photo_count ? d.photo_count : <Badge tone="warn">none</Badge>}</td>
@@ -119,6 +120,22 @@ function DriverEditor({ driver, vehicles, readOnly, onClose, onChanged }: {
       <div className="grid-2">
         <form className="stack" onSubmit={(e) => { e.preventDefault(); run(() => api.updateDriver(driver.id, form)); }}>
           <h3>Details</h3>
+          {!readOnly && (
+            <div className="row" style={{ alignItems: "center" }}>
+              {driver.photo_url
+                ? <img className="avatar-lg" src={assetUrl(driver.photo_url)} alt="" />
+                : <span className="avatar-lg" />}
+              <div className="stack-tight">
+                <input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy}
+                       onChange={(e) => { const f = e.target.files?.[0]; if (f) run(() => api.setDriverPhoto(driver.id, f)); }} />
+                <span className="muted small">PNG, JPEG or WebP, up to 2 MB.</span>
+                {driver.photo_url && (
+                  <button type="button" className="btn btn-link" disabled={busy}
+                    onClick={() => run(() => api.deleteDriverPhoto(driver.id))}>Remove photo</button>
+                )}
+              </div>
+            </div>
+          )}
           <Field label="Full name"><input value={form.name} disabled={readOnly} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></Field>
           <Field label="Status" hint="Blacklisted drivers are always denied and raise a critical alert.">
             <StatusSelect value={form.status} onChange={(status) => setForm({ ...form, status })} />

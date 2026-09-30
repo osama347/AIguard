@@ -62,6 +62,21 @@ TEST(fleet_crud_and_assignments) {
     CHECK(repo.assignments().empty());                        // cascaded
 }
 
+TEST(driver_photo_defaults_empty_and_can_be_set_and_cleared) {
+    TempDb t;
+    FleetRepository repo(*t.db);
+    Driver d;
+    d.name = "Bilal";
+    const int64_t did = repo.createDriver(d);
+    CHECK_EQ(repo.getDriver(did)->photoFile, std::string(""));
+
+    repo.setDriverPhoto(did, "42.jpg");
+    CHECK_EQ(repo.getDriver(did)->photoFile, std::string("42.jpg"));
+
+    repo.setDriverPhoto(did, "");
+    CHECK_EQ(repo.getDriver(did)->photoFile, std::string(""));
+}
+
 TEST(vehicle_owner_created_atomically_and_auto_assigned) {
     TempDb t;
     FleetRepository repo(*t.db);

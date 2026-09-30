@@ -39,6 +39,10 @@ public:
                                            const std::vector<std::pair<std::string, std::string>>& photos,
                                            const std::string& actor);   // (filename, bytes)
     void clearPhotos(int64_t driverId, const std::string& actor);
+    // Sets or clears (photoFile = "") a driver's profile picture; the caller has
+    // already written/removed the file itself. Cosmetic only — never touches the
+    // face matcher, so no invalidate().
+    Driver setDriverPhoto(int64_t driverId, const std::string& photoFile, const std::string& actor);
 
     std::vector<Vehicle> listVehicles() { return fleet_.listVehicles(); }
     Vehicle getVehicle(int64_t id);

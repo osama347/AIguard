@@ -22,6 +22,9 @@ public:
     int64_t createDriver(const Driver& d);
     bool updateDriver(const Driver& d);
     bool deleteDriver(int64_t id);
+    // Sets or clears (photoFile = "") the profile picture file name; the caller has
+    // already written/removed the file itself.
+    void setDriverPhoto(int64_t driverId, const std::string& photoFile);
 
     void addTemplates(int64_t driverId, const std::vector<std::vector<float>>& embeddings,
                       const std::string& modelVersion);

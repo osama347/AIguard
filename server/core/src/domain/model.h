@@ -18,6 +18,7 @@ struct Driver {
     std::string phone;
     std::string notes;
     bool isOwner = false;            // auto-enrolled owner of a vehicle; set once, at creation
+    std::string photoFile;           // inside <data>/media/portraits/, "" = none; admin-managed
     std::string createdAt, updatedAt;
     int templateCount = 0;
     std::vector<VehicleRef> vehicles;

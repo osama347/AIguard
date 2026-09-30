@@ -90,7 +90,7 @@ void CommunityRepository::save(const Community& c) {
 namespace {
 
 const char* kDriverCols =
-    "d.id, d.name, d.status, d.phone, d.notes, d.is_owner, d.created_at, d.updated_at, "
+    "d.id, d.name, d.status, d.phone, d.notes, d.is_owner, d.photo_file, d.created_at, d.updated_at, "
     "(SELECT COUNT(*) FROM face_templates t WHERE t.driver_id = d.id)";
 
 Driver readDriver(Stmt& st) {
@@ -101,9 +101,10 @@ Driver readDriver(Stmt& st) {
     d.phone = st.text(3);
     d.notes = st.text(4);
     d.isOwner = st.i64(5) != 0;
-    d.createdAt = st.text(6);
-    d.updatedAt = st.text(7);
-    d.templateCount = static_cast<int>(st.i64(8));
+    d.photoFile = st.text(6);
+    d.createdAt = st.text(7);
+    d.updatedAt = st.text(8);
+    d.templateCount = static_cast<int>(st.i64(9));
     return d;
 }
 
@@ -183,6 +184,12 @@ bool FleetRepository::deleteDriver(int64_t id) {
     Stmt st(db_, "DELETE FROM drivers WHERE id = ?");
     st.bind(1, id).run();
     return db_.changes() > 0;
+}
+
+void FleetRepository::setDriverPhoto(int64_t driverId, const std::string& photoFile) {
+    auto lk = db_.lock();
+    Stmt st(db_, "UPDATE drivers SET photo_file = ?, updated_at = datetime('now') WHERE id = ?");
+    st.bind(1, photoFile).bind(2, driverId).run();
 }
 
 void FleetRepository::addTemplates(int64_t driverId, const std::vector<std::vector<float>>& embeddings,

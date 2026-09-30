@@ -11,12 +11,17 @@ json isoTime(const std::string& t) {
     return s + "Z";
 }
 
-json toJson(const Driver& d) {
+json toJson(const Driver& d, bool includePhoto) {
     json vehicles = json::array();
     for (const auto& v : d.vehicles) vehicles.push_back({{"id", v.id}, {"plate_number", v.plateNumber}});
-    return {{"id", d.id}, {"name", d.name}, {"status", d.status}, {"phone", d.phone}, {"notes", d.notes},
-            {"is_owner", d.isOwner}, {"photo_count", d.templateCount}, {"vehicles", vehicles},
-            {"created_at", isoTime(d.createdAt)}, {"updated_at", isoTime(d.updatedAt)}};
+    json j = {{"id", d.id}, {"name", d.name}, {"status", d.status}, {"phone", d.phone}, {"notes", d.notes},
+              {"is_owner", d.isOwner}, {"photo_count", d.templateCount}, {"vehicles", vehicles},
+              {"created_at", isoTime(d.createdAt)}, {"updated_at", isoTime(d.updatedAt)}};
+    if (includePhoto) {
+        j["photo_url"] = d.photoFile.empty()
+            ? json(nullptr) : json("/api/v1/drivers/" + std::to_string(d.id) + "/photo?v=" + d.updatedAt);
+    }
+    return j;
 }
 
 json toJson(const Vehicle& v, bool includeAuthCode) {

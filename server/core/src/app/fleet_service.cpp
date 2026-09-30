@@ -169,6 +169,13 @@ void FleetService::clearPhotos(int64_t driverId, const std::string& actor) {
     invalidate();
 }
 
+Driver FleetService::setDriverPhoto(int64_t driverId, const std::string& photoFile, const std::string& actor) {
+    getDriver(driverId);   // 404 if missing
+    fleet_.setDriverPhoto(driverId, photoFile);
+    events_.audit(actor, photoFile.empty() ? "delete" : "update", "driver_photo", std::to_string(driverId));
+    return getDriver(driverId);
+}
+
 // ---------------------------------------------------------------- vehicles
 
 Vehicle FleetService::getVehicle(int64_t id) {

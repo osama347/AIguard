@@ -485,9 +485,9 @@ void registerApi(httplib::Server& svr, ApiDeps d) {
     // ------------------------------------------------------------ drivers
     svr.Get("/api/v1/drivers", [deps, requireUser](const Req& req, Res& res) {
         guarded(res, [&] {
-            requireUser(req);
+            User u = requireUser(req);
             json arr = json::array();
-            for (const auto& x : deps->fleet.listDrivers()) arr.push_back(toJson(x));
+            for (const auto& x : deps->fleet.listDrivers()) arr.push_back(toJson(x, u.isAdmin()));
             sendJson(res, {{"items", arr}});
         });
     });
@@ -495,14 +495,14 @@ void registerApi(httplib::Server& svr, ApiDeps d) {
     svr.Post("/api/v1/drivers", [deps, requireAdmin](const Req& req, Res& res) {
         guarded(res, [&] {
             User u = requireAdmin(req);
-            sendJson(res, toJson(deps->fleet.createDriver(driverFromJson(parseBody(req)), u.username)), 201);
+            sendJson(res, toJson(deps->fleet.createDriver(driverFromJson(parseBody(req)), u.username), true), 201);
         });
     });
 
     svr.Get(R"(/api/v1/drivers/(\d+))", [deps, requireUser](const Req& req, Res& res) {
         guarded(res, [&] {
-            requireUser(req);
-            sendJson(res, toJson(deps->fleet.getDriver(idParam(req))));
+            User u = requireUser(req);
+            sendJson(res, toJson(deps->fleet.getDriver(idParam(req)), u.isAdmin()));
         });
     });
 
@@ -510,7 +510,7 @@ void registerApi(httplib::Server& svr, ApiDeps d) {
         guarded(res, [&] {
             User u = requireAdmin(req);
             Driver current = deps->fleet.getDriver(idParam(req));
-            sendJson(res, toJson(deps->fleet.updateDriver(driverFromJson(parseBody(req), current), u.username)));
+            sendJson(res, toJson(deps->fleet.updateDriver(driverFromJson(parseBody(req), current), u.username), true));
         });
     });
 
@@ -536,7 +536,7 @@ void registerApi(httplib::Server& svr, ApiDeps d) {
                 enrolled += o.enrolled;
             }
             sendJson(res, {{"enrolled", enrolled}, {"photos", arr},
-                           {"driver", toJson(deps->fleet.getDriver(idParam(req)))}});
+                           {"driver", toJson(deps->fleet.getDriver(idParam(req)), true)}});
         });
     });
 
@@ -548,11 +548,61 @@ void registerApi(httplib::Server& svr, ApiDeps d) {
         });
     });
 
+    // Profile picture: a display thumbnail, unrelated to the face-enrollment photos
+    // above (those are only ever embedded, never stored). Admin-only for now, both
+    // to manage and to view.
+    svr.Get(R"(/api/v1/drivers/(\d+)/photo)", [deps, requireAdmin](const Req& req, Res& res) {
+        guarded(res, [&] {
+            requireAdmin(req);
+            Driver d = deps->fleet.getDriver(idParam(req));
+            const std::string path = deps->cfg.portraitsDir() + "/" + d.photoFile;
+            if (d.photoFile.empty() || !fs::exists(path)) throw NotFoundError("no photo");
+            const std::string ext = fs::path(d.photoFile).extension().string();
+            res.set_header("Cache-Control", "public, max-age=86400");
+            res.set_header("X-Content-Type-Options", "nosniff");
+            res.set_file_content(path, ext == ".png" ? "image/png" : ext == ".webp" ? "image/webp" : "image/jpeg");
+        });
+    });
+
+    svr.Put(R"(/api/v1/drivers/(\d+)/photo)", [deps, requireAdmin](const Req& req, Res& res) {
+        guarded(res, [&] {
+            User u = requireAdmin(req);
+            if (!req.is_multipart_form_data() || !req.form.has_file("photo"))
+                throw ValidationError("expected multipart/form-data with a 'photo' file");
+            const auto file = req.form.get_file("photo");
+            if (file.content.size() > (2u << 20)) throw ValidationError("the photo must be smaller than 2 MB");
+            const char* ext = imageExtension(file.content);
+            if (!ext) throw ValidationError("the photo must be a PNG, JPEG or WebP image");
+            const int64_t id = idParam(req);
+            Driver d = deps->fleet.getDriver(id);
+            std::error_code ec;
+            fs::create_directories(deps->cfg.portraitsDir(), ec);
+            if (!d.photoFile.empty()) fs::remove(deps->cfg.portraitsDir() + "/" + d.photoFile, ec);
+            const std::string filename = std::to_string(id) + ext;
+            std::ofstream out(deps->cfg.portraitsDir() + "/" + filename, std::ios::binary | std::ios::trunc);
+            out.write(file.content.data(), static_cast<std::streamsize>(file.content.size()));
+            if (!out) throw UnavailableError("could not store the photo");
+            out.close();
+            sendJson(res, toJson(deps->fleet.setDriverPhoto(id, filename, u.username), true));
+        });
+    });
+
+    svr.Delete(R"(/api/v1/drivers/(\d+)/photo)", [deps, requireAdmin](const Req& req, Res& res) {
+        guarded(res, [&] {
+            User u = requireAdmin(req);
+            const int64_t id = idParam(req);
+            Driver d = deps->fleet.getDriver(id);
+            std::error_code ec;
+            if (!d.photoFile.empty()) fs::remove(deps->cfg.portraitsDir() + "/" + d.photoFile, ec);
+            sendJson(res, toJson(deps->fleet.setDriverPhoto(id, "", u.username), true));
+        });
+    });
+
     svr.Put(R"(/api/v1/drivers/(\d+)/vehicles/(\d+))", [deps, requireAdmin](const Req& req, Res& res) {
         guarded(res, [&] {
             User u = requireAdmin(req);
             deps->fleet.assign(idParam(req, 1), idParam(req, 2), u.username);
-            sendJson(res, toJson(deps->fleet.getDriver(idParam(req, 1))));
+            sendJson(res, toJson(deps->fleet.getDriver(idParam(req, 1)), true));
         });
     });
 
@@ -635,7 +685,7 @@ void registerApi(httplib::Server& svr, ApiDeps d) {
                 authCodeLimiter().fail();
                 throw ValidationError("authorization code not recognized");
             }
-            sendJson(res, toJson(deps->fleet.authorizeDriverForVehicle(v.id, driverFromJson(b), u.username)), 201);
+            sendJson(res, toJson(deps->fleet.authorizeDriverForVehicle(v.id, driverFromJson(b), u.username), true), 201);
         });
     });
 

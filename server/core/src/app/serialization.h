@@ -10,7 +10,9 @@ namespace guard {
 // "YYYY-MM-DD HH:MM:SS" (SQLite, UTC) -> "YYYY-MM-DDTHH:MM:SSZ"; "" -> null.
 nlohmann::json isoTime(const std::string& sqliteTime);
 
-nlohmann::json toJson(const Driver& d);
+// photo_url is admin-only for now, like auth_code below: only included when
+// includePhoto is true.
+nlohmann::json toJson(const Driver& d, bool includePhoto = false);
 // auth_code is a credential, not a display fact: only included when includeAuthCode
 // is true (admins). Regular drivers/guards get owner name/phone but not the code.
 nlohmann::json toJson(const Vehicle& v, bool includeAuthCode = false);
