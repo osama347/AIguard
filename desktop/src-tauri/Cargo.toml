@@ -1,6 +1,6 @@
 [package]
 name = "guard-desktop"
-version = "2.5.4"
+version = "2.5.5"
 description = "Guard++ desktop app: a thin shell around the Guard++ web frontend"
 edition = "2021"
 
