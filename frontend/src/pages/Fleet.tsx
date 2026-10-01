@@ -1,6 +1,6 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, assetUrl, type Driver, type EnrollResult, type Status, type Vehicle } from "../api/client";
+import { api, fetchProtectedImage, type Driver, type EnrollResult, type Status, type Vehicle } from "../api/client";
 import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session";
 import { STATUS_TONE, copyToClipboard, isValidPhone, whatsAppShareUrl } from "../lib/format";
@@ -37,6 +37,28 @@ function EnrollSummary({ result }: { result: EnrollResult | null }) {
   );
 }
 
+/** Renders Driver.photo_url, which requires admin auth that a plain <img src> can't
+ *  send — fetched as a blob instead. `size` picks the CSS class (small table thumbnail
+ *  vs. the larger editor preview); with no photo, renders the same-sized empty circle. */
+function DriverAvatar({ photoUrl, size }: { photoUrl?: string | null; size: "sm" | "lg" }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const cls = size === "lg" ? "avatar-lg" : "avatar";
+
+  useEffect(() => {
+    if (!photoUrl) { setBlobUrl(null); return; }
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    fetchProtectedImage(photoUrl).then((blob) => {
+      if (cancelled) return;
+      objectUrl = URL.createObjectURL(blob);
+      setBlobUrl(objectUrl);
+    }).catch(() => { if (!cancelled) setBlobUrl(null); });
+    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [photoUrl]);
+
+  return blobUrl ? <img className={cls} src={blobUrl} alt="" /> : <span className={cls} />;
+}
+
 // ====================================================================== drivers ("People" tab)
 
 /** The "People" tab of the Fleet page: owners and the drivers they've authorized.
@@ -63,7 +85,7 @@ function PeopleTab({ drivers, vehicles, isAdmin, onChanged }: {
               <tbody>
                 {filtered.map((d) => (
                   <tr key={d.id} className="clickable" onClick={() => setEditing(d)}>
-                    {isAdmin && <td>{d.photo_url ? <img className="avatar" src={assetUrl(d.photo_url)} alt="" /> : <span className="avatar" />}</td>}
+                    {isAdmin && <td><DriverAvatar photoUrl={d.photo_url} size="sm" /></td>}
                     <td><strong>{d.name}</strong>{d.is_owner && <span className="muted small"> · Owner</span>}</td>
                     <td><Badge tone={STATUS_TONE[d.status]}>{d.status}</Badge></td>
                     <td>{d.photo_count ? d.photo_count : <Badge tone="warn">none</Badge>}</td>
@@ -122,9 +144,7 @@ function DriverEditor({ driver, vehicles, readOnly, onClose, onChanged }: {
           <h3>Details</h3>
           {!readOnly && (
             <div className="row" style={{ alignItems: "center" }}>
-              {driver.photo_url
-                ? <img className="avatar-lg" src={assetUrl(driver.photo_url)} alt="" />
-                : <span className="avatar-lg" />}
+              <DriverAvatar photoUrl={driver.photo_url} size="lg" />
               <div className="stack-tight">
                 <input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy}
                        onChange={(e) => { const f = e.target.files?.[0]; if (f) run(() => api.setDriverPhoto(driver.id, f)); }} />

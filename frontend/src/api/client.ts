@@ -304,5 +304,15 @@ export async function discoverServers(): Promise<FoundServer[]> {
   return (await invoke("discover_servers")) as FoundServer[];
 }
 
-/** Absolute URL for a server-relative path such as Community.logo_url. */
+/** Absolute URL for a server-relative, unauthenticated path such as Community.logo_url. */
 export const assetUrl = (path: string) => serverUrl() + path;
+
+/** Fetches a server-relative path that requires auth (e.g. Driver.photo_url, admin-only)
+ *  as a blob: plain <img src> can't carry the Authorization header the endpoint needs. */
+export async function fetchProtectedImage(path: string): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(serverUrl() + path, { headers });
+  if (!res.ok) throw new ApiError(res.status, "http_error", `HTTP ${res.status}`);
+  return res.blob();
+}
