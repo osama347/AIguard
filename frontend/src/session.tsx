@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { notify, requestNotifications } from "./lib/notify";
-import { api, discoverServers, getToken, isDesktop, onAuthChange, serverUrl, setServerUrl, setToken, subscribe, type Alert, type Community, type Health, type User } from "./api/client";
+import { ApiError, api, discoverServers, getToken, isDesktop, onAuthChange, serverUrl, setServerUrl, setToken, subscribe, type Alert, type Community, type Health, type User } from "./api/client";
 
 export interface Notice {
   id: number;
@@ -43,9 +43,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => onAuthChange(() => setTok(getToken())), []);
 
+  // A hard, independent timeout on top of api.health()'s own: a stale or otherwise
+  // bad address has been seen to hang the underlying fetch rather than fail it (the
+  // app's "Connecting…" screen then never clears on its own). This guarantees
+  // healthError gets set either way, so the UI always recovers to something clickable.
   const refreshHealth = useCallback(async () => {
     try {
-      setHealth(await api.health());
+      const h = await Promise.race([
+        api.health(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new ApiError(0, "timeout", "Timed out reaching the Guard++ service.")), 12_000)),
+      ]);
+      setHealth(h);
       setHealthError(null);
     } catch (e) {
       setHealthError(e as Error);

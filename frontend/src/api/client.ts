@@ -88,16 +88,6 @@ function storageSet(key: string, value: string | null) {
 export const isDesktop =
   !/^https?:$/.test(window.location.protocol) || window.location.hostname === "tauri.localhost";
 
-/** Base URL of guard-core. Browser: same origin. Desktop: the Jetson the user connected to ("" until chosen). */
-export function serverUrl(): string {
-  const saved = storageGet(SERVER_KEY);
-  return saved ? saved.replace(/\/+$/, "") : "";
-}
-
-export function setServerUrl(url: string | null) {
-  storageSet(SERVER_KEY, url ? url.trim().replace(/\/+$/, "") : null);
-}
-
 /** A syntactically complete http(s) address — rejects a bare IP/hostname with no
  *  scheme, or other garbage, before it's ever saved or connected to. A scheme-less
  *  value like "192.168.1.20" would otherwise be saved as-is and, on reload, resolved
@@ -110,6 +100,23 @@ export function isValidServerUrl(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Base URL of guard-core. Browser: same origin. Desktop: the Jetson the user connected to ("" until chosen). */
+export function serverUrl(): string {
+  const saved = storageGet(SERVER_KEY);
+  if (!saved) return "";
+  const trimmed = saved.replace(/\/+$/, "");
+  // Self-heals a value saved before this validation existed (or otherwise corrupted):
+  // treat it as unset rather than handing out something that can never connect, which
+  // otherwise hangs the app on a "Connecting…" screen with no way back but to clear
+  // app data by hand.
+  if (isDesktop && !isValidServerUrl(trimmed)) { storageSet(SERVER_KEY, null); return ""; }
+  return trimmed;
+}
+
+export function setServerUrl(url: string | null) {
+  storageSet(SERVER_KEY, url ? url.trim().replace(/\/+$/, "") : null);
 }
 
 const PING_TIMEOUT_MS = 6_000;
