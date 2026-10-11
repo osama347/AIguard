@@ -11,6 +11,10 @@ export interface NavItem {
   admin?: boolean;
   icon: Icon;
   badge?: "alerts";
+  /** false keeps it out of the sidebar while still searchable in the command palette —
+   *  for account/app config (e.g. Settings) that already lives in the avatar menu and
+   *  doesn't belong among the sidebar's task areas. */
+  sidebar?: boolean;
 }
 
 /** Single source of truth for navigation, shared by the sidebar and the command palette. */
@@ -27,5 +31,5 @@ export const NAV_ITEMS: NavItem[] = [
   { to: "/analyze", label: "Test a video", section: "Testing", admin: true, icon: FilmStrip },
   { to: "/jobs", label: "Test results", admin: true, icon: ListChecks },
 
-  { to: "/settings", label: "Settings", section: "", icon: GearSix },
+  { to: "/settings", label: "Settings", icon: GearSix, sidebar: false },
 ];

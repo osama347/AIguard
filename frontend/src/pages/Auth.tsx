@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from "react";
-import { api, isDesktop, serverUrl, setServerUrl, setToken } from "../api/client";
+import { api, isDesktop, isValidServerUrl, pingServer, serverUrl, setServerUrl, setToken } from "../api/client";
 import { useSession } from "../session";
 import { ServerScanner } from "../components/ServerScanner";
 import { Brand, Button, ErrorBox, Field, Spinner } from "../components/ui";
@@ -32,6 +32,7 @@ export function ConnectPage() {
   const { healthError, refreshHealth } = useSession();
   const [url, setUrl] = useState(serverUrl() || (isDesktop ? "" : window.location.origin));
   const [busy, setBusy] = useState(false);
+  const [urlError, setUrlError] = useState<string | null>(null);
 
   const connect = async (target: string) => {
     setBusy(true);
@@ -39,7 +40,25 @@ export function ConnectPage() {
     await refreshHealth();
     setBusy(false);
   };
-  const submit = (e: FormEvent) => { e.preventDefault(); void connect(url); };
+  // Typed addresses are unverified, unlike a scan result (already live moments ago):
+  // validate the format, then ping before committing to it, so a bad address is
+  // rejected inline instead of being saved and reloaded into.
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setUrlError(null);
+    if (!isValidServerUrl(url)) {
+      setUrlError("Enter the full address, including http:// and the port — e.g. http://192.168.1.20:8090");
+      return;
+    }
+    setBusy(true);
+    const reachable = await pingServer(url);
+    if (!reachable) {
+      setBusy(false);
+      setUrlError("Could not reach a Guard++ service at this address. Check it and try again.");
+      return;
+    }
+    await connect(url);
+  };
 
   const configured = !!serverUrl();
   return (
@@ -54,10 +73,11 @@ export function ConnectPage() {
             <ServerScanner autoScan busy={busy} onPick={(u) => void connect(u)} />
           </div>
           <form onSubmit={submit} className="flex flex-col gap-3">
+            <ErrorBox error={urlError} />
             <Field label="Server address" hint="The Jetson's address and port, for example http://192.168.1.20:8090">
-              <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://192.168.1.20:8090" required />
+              <input value={url} onChange={(e) => { setUrl(e.target.value); setUrlError(null); }} placeholder="http://192.168.1.20:8090" required />
             </Field>
-            <Button variant="primary" disabled={busy}>{busy ? <Spinner /> : "Connect"}</Button>
+            <Button variant="primary" disabled={busy}>{busy ? <Spinner label="Connecting…" /> : "Connect"}</Button>
           </form>
         </div>
       ) : (

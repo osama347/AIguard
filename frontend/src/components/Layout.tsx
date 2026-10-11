@@ -18,8 +18,8 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
   const { isAdmin, openAlerts } = useSession();
   return (
     <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto">
-      {NAV_ITEMS.filter((n) => !n.admin || isAdmin).map((n, i) => {
-        const prev: NavItem | undefined = NAV_ITEMS.filter((x) => !x.admin || isAdmin)[i - 1];
+      {NAV_ITEMS.filter((n) => (!n.admin || isAdmin) && n.sidebar !== false).map((n, i) => {
+        const prev: NavItem | undefined = NAV_ITEMS.filter((x) => (!x.admin || isAdmin) && x.sidebar !== false)[i - 1];
         const showSection = n.section !== undefined && n.section !== (prev?.section ?? "");
         return (
           <Fragment key={n.to}>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ArrowsClockwise } from "@phosphor-icons/react";
 import { notificationsEnabled, requestNotifications } from "../lib/notify";
-import { api, assetUrl, checkForUpdate, isDesktop, serverUrl, setServerUrl, type CommunityInput } from "../api/client";
+import { api, assetUrl, checkForUpdate, isDesktop, isValidServerUrl, pingServer, serverUrl, setServerUrl, type CommunityInput } from "../api/client";
 import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session";
 import { formatBytes } from "../lib/format";
@@ -13,6 +13,26 @@ export function SettingsPage() {
   const { user, isAdmin, health, community, refreshCommunity, signOut, pushNotice } = useSession();
   const system = useAsync(() => api.system(), []);
   const [url, setUrl] = useState(serverUrl());
+  const [urlError, setUrlError] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const saveServer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setUrlError(null);
+    if (!url) { setServerUrl(null); window.location.reload(); return; }
+    if (!isValidServerUrl(url)) {
+      setUrlError("Enter the full address, including http:// and the port — e.g. http://192.168.1.20:8090");
+      return;
+    }
+    setConnecting(true);
+    const reachable = await pingServer(url);
+    setConnecting(false);
+    if (!reachable) {
+      setUrlError("Could not reach a Guard++ service at this address. Check it and try again.");
+      return;
+    }
+    setServerUrl(url);
+    window.location.reload();
+  };
   const [form, setForm] = useState<CommunityInput>({});
   const [comErr, setComErr] = useState<string | null>(null);
   useEffect(() => {
@@ -99,11 +119,14 @@ export function SettingsPage() {
             <strong className="text-[13px] font-medium">Devices found on this network</strong>
             <ServerScanner onPick={(u) => { setServerUrl(u); window.location.reload(); }} />
           </div>
-          <form className="mt-4 flex flex-wrap items-end gap-3 border-t border-line pt-4" onSubmit={(e) => { e.preventDefault(); setServerUrl(url || null); window.location.reload(); }}>
-            <Field label="Or enter the address directly" hint="The Jetson's address, for example http://192.168.1.20:8090">
-              <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://192.168.1.20:8090" />
-            </Field>
-            <Button>Save &amp; reconnect</Button>
+          <form className="mt-4 flex flex-col gap-3 border-t border-line pt-4" onSubmit={saveServer}>
+            <ErrorBox error={urlError} />
+            <div className="flex flex-wrap items-end gap-3">
+              <Field label="Or enter the address directly" hint="The Jetson's address, for example http://192.168.1.20:8090">
+                <input value={url} onChange={(e) => { setUrl(e.target.value); setUrlError(null); }} placeholder="http://192.168.1.20:8090" />
+              </Field>
+              <Button disabled={connecting}>{connecting ? <Spinner label="Connecting…" /> : "Save & reconnect"}</Button>
+            </div>
           </form>
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button disabled={checkingUpdate} onClick={runUpdateCheck}>

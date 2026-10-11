@@ -98,6 +98,38 @@ export function setServerUrl(url: string | null) {
   storageSet(SERVER_KEY, url ? url.trim().replace(/\/+$/, "") : null);
 }
 
+/** A syntactically complete http(s) address — rejects a bare IP/hostname with no
+ *  scheme, or other garbage, before it's ever saved or connected to. A scheme-less
+ *  value like "192.168.1.20" would otherwise be saved as-is and, on reload, resolved
+ *  as a RELATIVE path against the app's own origin instead of that address — which
+ *  can hang rather than fail, since nothing in that shape is reachable to time out. */
+export function isValidServerUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return (u.protocol === "http:" || u.protocol === "https:") && !!u.hostname;
+  } catch {
+    return false;
+  }
+}
+
+const PING_TIMEOUT_MS = 6_000;
+
+/** Tries reaching a candidate address directly, with its own bounded timeout —
+ *  independent of whatever is currently saved — so a bad address can be rejected
+ *  inline, before being saved and reloaded into. Never throws. */
+export async function pingServer(url: string): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PING_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${url.replace(/\/+$/, "")}/api/v1/health`, { signal: controller.signal });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 let token: string | null = storageGet(TOKEN_KEY);
 const authListeners = new Set<() => void>();
 
