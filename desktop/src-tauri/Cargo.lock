@@ -1483,7 +1483,7 @@ dependencies = [
 
 [[package]]
 name = "guard-desktop"
-version = "2.5.8"
+version = "2.5.9"
 dependencies = [
  "mdns-sd",
  "serde",
