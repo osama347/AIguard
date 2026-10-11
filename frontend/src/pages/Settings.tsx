@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { ArrowsClockwise } from "@phosphor-icons/react";
 import { notificationsEnabled, requestNotifications } from "../lib/notify";
 import { api, assetUrl, checkForUpdate, isDesktop, isValidServerUrl, pingServer, serverUrl, setServerUrl, type CommunityInput } from "../api/client";
@@ -9,9 +10,30 @@ import { cn } from "../lib/cn";
 import { ServerScanner } from "../components/ServerScanner";
 import { Badge, Button, Card, CardHead, ErrorBox, Fact, Facts, Field, FormSection, PageHeader, Spinner } from "../components/ui";
 
+type SettingsTab = "general" | "connection" | "organization" | "system";
+
 export function SettingsPage() {
   const { user, isAdmin, health, community, refreshCommunity, signOut, pushNotice } = useSession();
   const system = useAsync(() => api.system(), []);
+
+  // Which tabs exist depends on who's looking: a guard on the browser gets only
+  // General (nothing else applies to them), a guard in the desktop app also gets
+  // Connection, and only an admin gets Organization/System.
+  const tabs: { key: SettingsTab; label: string }[] = [
+    { key: "general", label: "General" },
+    ...(isDesktop ? [{ key: "connection" as const, label: "Connection" }] : []),
+    ...(isAdmin ? [{ key: "organization" as const, label: "Organization" }] : []),
+    ...(isAdmin ? [{ key: "system" as const, label: "System" }] : []),
+  ];
+  const [params, setParams] = useSearchParams();
+  const requested = params.get("tab");
+  const tab: SettingsTab = tabs.some((t) => t.key === requested) ? (requested as SettingsTab) : "general";
+  const setTab = (t: SettingsTab) => setParams(t === "general" ? {} : { tab: t }, { replace: true });
+  const tabBtn = (on: boolean) =>
+    cn(
+      "-mb-px border-b-2 px-3 py-2 text-[13.5px] font-medium transition-colors",
+      on ? "border-text text-text" : "border-transparent text-muted hover:text-text",
+    );
   const [url, setUrl] = useState(serverUrl());
   const [urlError, setUrlError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -112,9 +134,36 @@ export function SettingsPage() {
     <>
       <PageHeader title="Settings" />
 
-      {isDesktop && (
+      <div className="mb-4 flex gap-1 border-b border-line">
+        {tabs.map((t) => (
+          <button key={t.key} type="button" className={tabBtn(tab === t.key)} onClick={() => setTab(t.key)}>{t.label}</button>
+        ))}
+      </div>
+
+      {tab === "general" && (
+        <>
+          <Card>
+            <CardHead title="Account" />
+            <p className="m-0 text-[13px]">
+              Signed in as <strong>{user?.full_name || user?.username}</strong>
+              {user?.full_name && <span className="text-muted"> ({user.username})</span>}{" "}
+              <Badge tone="info">{isAdmin ? "Administrator" : "Guard"}</Badge>
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {!notif && (
+                <Button onClick={() => requestNotifications().then(setNotif)}>Enable alert notifications</Button>
+              )}
+              <Button variant="danger" onClick={signOut}>Sign out</Button>
+            </div>
+          </Card>
+
+          <PasswordCard />
+        </>
+      )}
+
+      {tab === "connection" && isDesktop && (
         <Card>
-          <CardHead title="Server" />
+          <CardHead title="Server" sub="The Jetson this app talks to." />
           <div className="flex flex-col gap-2">
             <strong className="text-[13px] font-medium">Devices found on this network</strong>
             <ServerScanner onPick={(u) => { setServerUrl(u); window.location.reload(); }} />
@@ -128,7 +177,7 @@ export function SettingsPage() {
               <Button disabled={connecting}>{connecting ? <Spinner label="Connecting…" /> : "Save & reconnect"}</Button>
             </div>
           </form>
-          <div className="mt-4 flex flex-wrap items-center gap-3">
+          <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-line pt-4">
             <Button disabled={checkingUpdate} onClick={runUpdateCheck}>
               <ArrowsClockwise size={15} /> {checkingUpdate ? "Checking…" : "Check for updates"}
             </Button>
@@ -137,108 +186,93 @@ export function SettingsPage() {
         </Card>
       )}
 
-      {isAdmin && (
-        <Card>
-          <CardHead title="Community" sub="Shown on the login screen and in the sidebar." />
-          <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); void run(() => api.saveCommunity(form), "Community details saved"); }}>
-            <ErrorBox error={comErr} />
-            <FormSection title="Details">
-              <Field label="Community name"><input value={form.name ?? ""} onChange={setF("name")} required maxLength={120} /></Field>
-              <Field label="Address"><input value={form.address ?? ""} onChange={setF("address")} maxLength={300} /></Field>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="City"><input value={form.city ?? ""} onChange={setF("city")} maxLength={100} /></Field>
-                <Field label="Country"><input value={form.country ?? ""} onChange={setF("country")} maxLength={100} /></Field>
+      {tab === "organization" && isAdmin && (
+        <>
+          <Card>
+            <CardHead title="Community" sub="Shown on the login screen and in the sidebar." />
+            <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); void run(() => api.saveCommunity(form), "Community details saved"); }}>
+              <ErrorBox error={comErr} />
+              <FormSection title="Details">
+                <Field label="Community name"><input value={form.name ?? ""} onChange={setF("name")} required maxLength={120} /></Field>
+                <Field label="Address"><input value={form.address ?? ""} onChange={setF("address")} maxLength={300} /></Field>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="City"><input value={form.city ?? ""} onChange={setF("city")} maxLength={100} /></Field>
+                  <Field label="Country"><input value={form.country ?? ""} onChange={setF("country")} maxLength={100} /></Field>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Helpline"><input value={form.helpline ?? ""} onChange={setF("helpline")} maxLength={60} /></Field>
+                  <Field label="Email"><input type="email" value={form.email ?? ""} onChange={setF("email")} maxLength={120} /></Field>
+                </div>
+                <Field label="Website"><input value={form.website ?? ""} onChange={setF("website")} maxLength={200} /></Field>
+              </FormSection>
+              <div>
+                <Button variant="primary">Save community details</Button>
               </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="Helpline"><input value={form.helpline ?? ""} onChange={setF("helpline")} maxLength={60} /></Field>
-                <Field label="Email"><input type="email" value={form.email ?? ""} onChange={setF("email")} maxLength={120} /></Field>
+            </form>
+            <div className="mt-5 flex flex-wrap items-end gap-4 border-t border-line pt-5">
+              <img
+                className="logo-preview"
+                src={logoPreview ?? (community?.logo_url ? assetUrl(community.logo_url) : undefined)}
+                alt={community?.logo_url ? "Community logo" : "No logo"}
+                style={!logoPreview && !community?.logo_url ? { borderStyle: "dashed" } : undefined}
+              />
+              <div className="flex min-w-[220px] flex-1 flex-col gap-2">
+                <Field label="Logo" hint="PNG, JPEG or WebP, up to 2 MB. Selecting a file only stages it.">
+                  <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => setLogo(e.target.files?.[0] ?? null)} />
+                </Field>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button variant="primary" disabled={!logo || saveLogo} onClick={() => void saveLogoNow()}>
+                    {saveLogo ? "Saving…" : "Save logo"}
+                  </Button>
+                  {community?.logo_url && (
+                    <Button disabled={saveLogo} onClick={() => void run(() => api.deleteLogo(), "Logo removed")}>Remove logo</Button>
+                  )}
+                </div>
+                {logo && <span className="text-[12px] text-ok">New logo selected — press “Save logo” to apply it.</span>}
               </div>
-              <Field label="Website"><input value={form.website ?? ""} onChange={setF("website")} maxLength={200} /></Field>
-            </FormSection>
-            <div>
-              <Button variant="primary">Save community details</Button>
             </div>
-          </form>
-          <div className="mt-5 flex flex-wrap items-end gap-4 border-t border-line pt-5">
-            <img
-              className="logo-preview"
-              src={logoPreview ?? (community?.logo_url ? assetUrl(community.logo_url) : undefined)}
-              alt={community?.logo_url ? "Community logo" : "No logo"}
-              style={!logoPreview && !community?.logo_url ? { borderStyle: "dashed" } : undefined}
-            />
-            <div className="flex min-w-[220px] flex-1 flex-col gap-2">
-              <Field label="Logo" hint="PNG, JPEG or WebP, up to 2 MB. Selecting a file only stages it.">
-                <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => setLogo(e.target.files?.[0] ?? null)} />
-              </Field>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button variant="primary" disabled={!logo || saveLogo} onClick={() => void saveLogoNow()}>
-                  {saveLogo ? "Saving…" : "Save logo"}
-                </Button>
-                {community?.logo_url && (
-                  <Button disabled={saveLogo} onClick={() => void run(() => api.deleteLogo(), "Logo removed")}>Remove logo</Button>
-                )}
-              </div>
-              {logo && <span className="text-[12px] text-ok">New logo selected — press “Save logo” to apply it.</span>}
+          </Card>
+
+          <Card>
+            <CardHead title="Driver approvals" sub="Used to build the link sent to a vehicle owner to approve a new driver remotely." />
+            <ErrorBox error={baseUrlErr} />
+            <Field label="Public base URL" hint="Only needed if owners are off your LAN — a tunnel address (ngrok, Cloudflare) reachable from outside. Leave blank to use this server's LAN address, which only works if the owner is on the same network.">
+              <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://your-tunnel.example.com" />
+            </Field>
+            <div className="mt-2">
+              <Button variant="primary" disabled={savingBaseUrl} onClick={() => void saveBaseUrl()}>{savingBaseUrl ? "Saving…" : "Save"}</Button>
             </div>
-          </div>
-        </Card>
+          </Card>
+        </>
       )}
 
-      {isAdmin && (
+      {tab === "system" && isAdmin && (
         <Card>
-          <CardHead title="Driver approvals" sub="Used to build the link sent to a vehicle owner to approve a new driver remotely." />
-          <ErrorBox error={baseUrlErr} />
-          <Field label="Public base URL" hint="Only needed if owners are off your LAN — a tunnel address (ngrok, Cloudflare) reachable from outside. Leave blank to use this server's LAN address, which only works if the owner is on the same network.">
-            <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://your-tunnel.example.com" />
-          </Field>
-          <div className="mt-2">
-            <Button variant="primary" disabled={savingBaseUrl} onClick={() => void saveBaseUrl()}>{savingBaseUrl ? "Saving…" : "Save"}</Button>
-          </div>
-        </Card>
-      )}
-
-      <Card>
-        <CardHead title="Account" />
-        <p className="m-0 text-[13px]">
-          Signed in as <strong>{user?.full_name || user?.username}</strong>
-          {user?.full_name && <span className="text-muted"> ({user.username})</span>}{" "}
-          <Badge tone="info">{isAdmin ? "Administrator" : "Guard"}</Badge>
-        </p>
-        <div className="mt-4 flex flex-wrap gap-2">
-          {!notif && (
-            <Button onClick={() => requestNotifications().then(setNotif)}>Enable alert notifications</Button>
+          <CardHead title="System" sub="Read-only diagnostics." />
+          <ErrorBox error={system.error} onRetry={system.reload} />
+          {!system.data ? <Spinner /> : (
+            <Facts>
+              <Fact label="Version">{system.data.version}</Fact>
+              <Fact label="AI engine">
+                <Badge tone={health?.inference.status === "ok" ? "ok" : "warn"}>{health?.inference.status ?? "unknown"}</Badge>
+                {health?.inference.message && <span className="text-[12px] text-muted"> {health.inference.message}</span>}
+              </Fact>
+              {models?.device && <Fact label="Device">{models.device}</Fact>}
+              {models?.trt_version && <Fact label="TensorRT">{models.trt_version} ({models.precision})</Fact>}
+              {models?.models && <Fact label="Models">{models.models.join(", ")}</Fact>}
+              <Fact label="Face match threshold">{system.data.policy.match_threshold.toFixed(2)}</Fact>
+              <Fact label="Default analysis rate">{system.data.policy.sample_fps} frames/s</Fact>
+              {system.data.live && <>
+                <Fact label="Cameras">{system.data.live.cameras}</Fact>
+                <Fact label="Visit ends after">{system.data.live.visit_gap_s} s with nothing in view</Fact>
+                <Fact label="Repeat sightings">merged within {system.data.live.repeat_suppress_s} s</Fact>
+                <Fact label="Snapshots kept">{system.data.live.snapshot_retention_days} days (the access log itself is kept)</Fact>
+              </>}
+              {health && <Fact label="Free disk">{formatBytes(health.disk.free_bytes)} of {formatBytes(health.disk.total_bytes)}</Fact>}
+            </Facts>
           )}
-          <Button variant="danger" onClick={signOut}>Sign out</Button>
-        </div>
-      </Card>
-
-      <PasswordCard />
-
-      <Card>
-        <CardHead title="System" />
-        <ErrorBox error={system.error} onRetry={system.reload} />
-        {!system.data ? <Spinner /> : (
-          <Facts>
-            <Fact label="Version">{system.data.version}</Fact>
-            <Fact label="AI engine">
-              <Badge tone={health?.inference.status === "ok" ? "ok" : "warn"}>{health?.inference.status ?? "unknown"}</Badge>
-              {health?.inference.message && <span className="text-[12px] text-muted"> {health.inference.message}</span>}
-            </Fact>
-            {models?.device && <Fact label="Device">{models.device}</Fact>}
-            {models?.trt_version && <Fact label="TensorRT">{models.trt_version} ({models.precision})</Fact>}
-            {models?.models && <Fact label="Models">{models.models.join(", ")}</Fact>}
-            <Fact label="Face match threshold">{system.data.policy.match_threshold.toFixed(2)}</Fact>
-            <Fact label="Default analysis rate">{system.data.policy.sample_fps} frames/s</Fact>
-            {system.data.live && <>
-              <Fact label="Cameras">{system.data.live.cameras}</Fact>
-              <Fact label="Visit ends after">{system.data.live.visit_gap_s} s with nothing in view</Fact>
-              <Fact label="Repeat sightings">merged within {system.data.live.repeat_suppress_s} s</Fact>
-              <Fact label="Snapshots kept">{system.data.live.snapshot_retention_days} days (the access log itself is kept)</Fact>
-            </>}
-            {health && <Fact label="Free disk">{formatBytes(health.disk.free_bytes)} of {formatBytes(health.disk.total_bytes)}</Fact>}
-          </Facts>
-        )}
-      </Card>
+        </Card>
+      )}
     </>
   );
 }
