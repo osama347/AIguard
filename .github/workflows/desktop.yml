@@ -29,10 +29,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            desktop/package-lock.json
+            frontend/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ startsWith(matrix.os, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      # Caches ~/.cargo and target/ across runs, keyed by Cargo.lock — was missing
+      # entirely, so every tag push did a fully cold Rust build on all 3 platforms
+      # (the actual cause of each release taking 7-11 minutes).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
       - name: Linux system libraries
         if: startsWith(matrix.os, 'ubuntu')
         run: |
