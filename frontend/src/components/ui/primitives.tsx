@@ -169,6 +169,22 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
   );
 }
 
+/* ------------------------------------------------------------------ form section */
+
+/** A titled group of fields, so long forms read as steps instead of a wall of inputs.
+ *  Use one per logical part of a form (Details / Face photos / Authorized vehicles…). */
+export function FormSection({ title, hint, children }: { title: string; hint?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-3">
+      <div>
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-faint">{title}</h3>
+        {hint && <p className="mt-0.5 text-[12px] text-muted">{hint}</p>}
+      </div>
+      <div className="flex flex-col gap-3">{children}</div>
+    </section>
+  );
+}
+
 /* ------------------------------------------------------------------ progress */
 
 export function Progress({ value, tone = "info" }: { value: number; tone?: Tone }) {

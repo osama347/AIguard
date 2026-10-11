@@ -136,7 +136,7 @@ function MobileNav({ open, onOpenChange }: { open: boolean; onOpenChange: (v: bo
 }
 
 export function Layout() {
-  const { community, toasts, dismissToast } = useSession();
+  const { community, toasts, dismissToast, notices, dismissNotice } = useSession();
   const navigate = useNavigate();
   const [palette, setPalette] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
@@ -203,6 +203,25 @@ export function Layout() {
                 <span aria-hidden className="text-[15px] leading-none">×</span>
               </button>
             </div>
+          </div>
+        ))}
+        {notices.map((nt) => (
+          <div
+            key={nt.id}
+            className={cn(
+              "flex items-start justify-between gap-3 rounded-lg border border-line border-l-[3px] bg-surface p-3.5 shadow-[var(--shadow-pop)] animate-[toast-in_.18s_ease-out]",
+              nt.tone === "ok" ? "border-l-ok" : "border-l-info",
+            )}
+          >
+            <div className="min-w-0">
+              <div className="mb-0.5 flex items-center gap-2">
+                <Badge tone={nt.tone}>{nt.tone === "ok" ? "Saved" : "Info"}</Badge>
+              </div>
+              <div className="text-[13px]">{nt.message}</div>
+            </div>
+            <button className="grid size-7 shrink-0 place-items-center rounded-md text-muted hover:bg-surface-2 hover:text-text" onClick={() => dismissNotice(nt.id)} aria-label="Dismiss">
+              <span aria-hidden className="text-[15px] leading-none">×</span>
+            </button>
           </div>
         ))}
       </div>

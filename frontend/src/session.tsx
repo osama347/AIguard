@@ -1,6 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { notify, requestNotifications } from "./lib/notify";
 import { api, getToken, onAuthChange, setToken, subscribe, type Alert, type Community, type Health, type User } from "./api/client";
+
+export interface Notice {
+  id: number;
+  message: string;
+  tone: "ok" | "info";
+}
 
 interface Session {
   user: User | null;
@@ -10,12 +16,15 @@ interface Session {
   healthError: Error | null;
   openAlerts: number;
   toasts: Alert[];
+  notices: Notice[];
   refreshHealth: () => Promise<void>;
   refreshCommunity: () => Promise<void>;
   refreshAlerts: () => void;
   signIn: (token: string, user: User) => void;
   signOut: () => Promise<void>;
   dismissToast: (id: number) => void;
+  pushNotice: (message: string, tone?: Notice["tone"]) => void;
+  dismissNotice: (id: number) => void;
 }
 
 const Ctx = createContext<Session | null>(null);
@@ -29,6 +38,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [community, setCommunity] = useState<Community | null>(null);
   const [openAlerts, setOpenAlerts] = useState(0);
   const [toasts, setToasts] = useState<Alert[]>([]);
+  const [notices, setNotices] = useState<Notice[]>([]);
+  const noticeId = useRef(0);
 
   useEffect(() => onAuthChange(() => setTok(getToken())), []);
 
@@ -93,9 +104,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const dismissToast = (id: number) => setToasts((t) => t.filter((a) => a.id !== id));
 
+  // User-action confirmations ("Driver saved", "Vehicle registered"…), the opposite of
+  // the alert toasts above: something the user just did, not something the system saw.
+  const pushNotice = useCallback((message: string, tone: Notice["tone"] = "ok") => {
+    const id = ++noticeId.current;
+    setNotices((n) => [...n, { id, message, tone }].slice(-4));
+    window.setTimeout(() => setNotices((n) => n.filter((x) => x.id !== id)), 4000);
+  }, []);
+  const dismissNotice = useCallback((id: number) => setNotices((n) => n.filter((x) => x.id !== id)), []);
+
   return (
-    <Ctx.Provider value={{ user: token ? user : null, isAdmin: !!token && user?.role === "admin", health, community, healthError, openAlerts, toasts,
-                           refreshHealth, refreshCommunity, refreshAlerts, signIn, signOut, dismissToast }}>
+    <Ctx.Provider value={{ user: token ? user : null, isAdmin: !!token && user?.role === "admin", health, community, healthError, openAlerts, toasts, notices,
+                           refreshHealth, refreshCommunity, refreshAlerts, signIn, signOut, dismissToast, pushNotice, dismissNotice }}>
       {children}
     </Ctx.Provider>
   );

@@ -5,23 +5,50 @@ import { api, assetUrl, checkForUpdate, isDesktop, serverUrl, setServerUrl, type
 import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session";
 import { formatBytes } from "../lib/format";
-import { Badge, Button, Card, CardHead, ErrorBox, Fact, Facts, Field, PageHeader, Spinner } from "../components/ui";
+import { cn } from "../lib/cn";
+import { Badge, Button, Card, CardHead, ErrorBox, Fact, Facts, Field, FormSection, PageHeader, Spinner } from "../components/ui";
 
 export function SettingsPage() {
-  const { user, isAdmin, health, community, refreshCommunity, signOut } = useSession();
+  const { user, isAdmin, health, community, refreshCommunity, signOut, pushNotice } = useSession();
   const system = useAsync(() => api.system(), []);
   const [url, setUrl] = useState(serverUrl());
   const [form, setForm] = useState<CommunityInput>({});
-  const [comMsg, setComMsg] = useState<string | null>(null);
   const [comErr, setComErr] = useState<string | null>(null);
   useEffect(() => {
     if (community) setForm({ name: community.name, address: community.address, city: community.city, country: community.country,
                              helpline: community.helpline, email: community.email, website: community.website });
   }, [community]);
   const setF = (k: keyof CommunityInput) => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [k]: e.target.value });
-  const saveCommunity = async (action: () => Promise<unknown>, ok: string) => {
-    setComMsg(null); setComErr(null);
-    try { await action(); await refreshCommunity(); setComMsg(ok); } catch (e) { setComErr((e as Error).message); }
+  const run = async (action: () => Promise<unknown>, ok: string) => {
+    setComErr(null);
+    try { await action(); await refreshCommunity(); pushNotice(ok); } catch (e) { setComErr((e as Error).message); }
+  };
+
+  // Logo is staged like every other form field: selecting a file changes nothing on
+  // the server until "Save logo" is pressed, so there is always one clear submit.
+  const [logo, setLogo] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  useEffect(() => {
+    if (!logo) { setLogoPreview(null); return; }
+    const url = URL.createObjectURL(logo);
+    setLogoPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [logo]);
+  const [saveLogo, setSavingLogo] = useState(false);
+  const saveLogoNow = async () => {
+    if (!logo) return;
+    setSavingLogo(true);
+    setComErr(null);
+    try {
+      await api.uploadLogo(logo);
+      await refreshCommunity();
+      setLogo(null);
+      pushNotice("Logo updated");
+    } catch (e) {
+      setComErr((e as Error).message);
+    } finally {
+      setSavingLogo(false);
+    }
   };
   const [notif, setNotif] = useState(true);
   useEffect(() => { notificationsEnabled().then(setNotif); }, []);
@@ -66,32 +93,47 @@ export function SettingsPage() {
 
       {isAdmin && (
         <Card>
-          <CardHead title="Community" />
-          <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); void saveCommunity(() => api.saveCommunity(form), "Saved."); }}>
+          <CardHead title="Community" sub="Shown on the login screen and in the sidebar." />
+          <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); void run(() => api.saveCommunity(form), "Community details saved"); }}>
             <ErrorBox error={comErr} />
-            {comMsg && <p className="text-[13px] text-muted">{comMsg}</p>}
-            <Field label="Community name"><input value={form.name ?? ""} onChange={setF("name")} required maxLength={120} /></Field>
-            <Field label="Address"><input value={form.address ?? ""} onChange={setF("address")} maxLength={300} /></Field>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="City"><input value={form.city ?? ""} onChange={setF("city")} maxLength={100} /></Field>
-              <Field label="Country"><input value={form.country ?? ""} onChange={setF("country")} maxLength={100} /></Field>
+            <FormSection title="Details">
+              <Field label="Community name"><input value={form.name ?? ""} onChange={setF("name")} required maxLength={120} /></Field>
+              <Field label="Address"><input value={form.address ?? ""} onChange={setF("address")} maxLength={300} /></Field>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="City"><input value={form.city ?? ""} onChange={setF("city")} maxLength={100} /></Field>
+                <Field label="Country"><input value={form.country ?? ""} onChange={setF("country")} maxLength={100} /></Field>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Helpline"><input value={form.helpline ?? ""} onChange={setF("helpline")} maxLength={60} /></Field>
+                <Field label="Email"><input type="email" value={form.email ?? ""} onChange={setF("email")} maxLength={120} /></Field>
+              </div>
+              <Field label="Website"><input value={form.website ?? ""} onChange={setF("website")} maxLength={200} /></Field>
+            </FormSection>
+            <div>
+              <Button variant="primary">Save community details</Button>
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Helpline"><input value={form.helpline ?? ""} onChange={setF("helpline")} maxLength={60} /></Field>
-              <Field label="Email"><input type="email" value={form.email ?? ""} onChange={setF("email")} maxLength={120} /></Field>
-            </div>
-            <Field label="Website"><input value={form.website ?? ""} onChange={setF("website")} maxLength={200} /></Field>
-            <div><Button variant="primary">Save community details</Button></div>
           </form>
-          <div className="mt-5 flex flex-wrap items-center gap-4">
-            {community?.logo_url && <img className="logo-preview" src={assetUrl(community.logo_url)} alt="Community logo" />}
-            <Field label="Logo" hint="PNG, JPEG or WebP, up to 2 MB.">
-              <input type="file" accept="image/png,image/jpeg,image/webp"
-                     onChange={(e) => { const f = e.target.files?.[0]; if (f) void saveCommunity(() => api.uploadLogo(f), "Logo updated."); }} />
-            </Field>
-            {community?.logo_url && (
-              <Button onClick={() => void saveCommunity(() => api.deleteLogo(), "Logo removed.")}>Remove logo</Button>
-            )}
+          <div className="mt-5 flex flex-wrap items-end gap-4 border-t border-line pt-5">
+            <img
+              className="logo-preview"
+              src={logoPreview ?? (community?.logo_url ? assetUrl(community.logo_url) : undefined)}
+              alt={community?.logo_url ? "Community logo" : "No logo"}
+              style={!logoPreview && !community?.logo_url ? { borderStyle: "dashed" } : undefined}
+            />
+            <div className="flex min-w-[220px] flex-1 flex-col gap-2">
+              <Field label="Logo" hint="PNG, JPEG or WebP, up to 2 MB. Selecting a file only stages it.">
+                <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => setLogo(e.target.files?.[0] ?? null)} />
+              </Field>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="primary" disabled={!logo || saveLogo} onClick={() => void saveLogoNow()}>
+                  {saveLogo ? "Saving…" : "Save logo"}
+                </Button>
+                {community?.logo_url && (
+                  <Button disabled={saveLogo} onClick={() => void run(() => api.deleteLogo(), "Logo removed")}>Remove logo</Button>
+                )}
+              </div>
+              {logo && <span className="text-[12px] text-ok">New logo selected — press “Save logo” to apply it.</span>}
+            </div>
           </div>
         </Card>
       )}
@@ -143,6 +185,7 @@ export function SettingsPage() {
 }
 
 function PasswordCard() {
+  const { pushNotice } = useSession();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [repeat, setRepeat] = useState("");
@@ -155,8 +198,9 @@ function PasswordCard() {
     setSaving(true);
     try {
       await api.changePassword(current, next);
-      setMsg({ ok: true, text: "Password changed." });
+      setMsg(null);
       setCurrent(""); setNext(""); setRepeat("");
+      pushNotice("Password changed");
     } catch (err) {
       setMsg({ ok: false, text: (err as Error).message });
     } finally {
@@ -175,7 +219,7 @@ function PasswordCard() {
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <Button disabled={saving || !current || next.length < 8}>{saving ? "Saving…" : "Change password"}</Button>
-          {msg && <Badge tone={msg.ok ? "ok" : "bad"}>{msg.text}</Badge>}
+          {msg && <span className={cn("text-[13px]", msg.ok ? "text-ok" : "text-bad")}>{msg.text}</span>}
         </div>
       </Card>
     </form>

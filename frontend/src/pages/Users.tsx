@@ -4,7 +4,7 @@ import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session";
 import { formatRelative } from "../lib/format";
 import { cn } from "../lib/cn";
-import { Badge, Button, Card, ErrorBox, Field, Modal, PageHeader, Spinner } from "../components/ui";
+import { Badge, Button, Card, ErrorBox, Field, FormSection, Modal, PageHeader, Spinner } from "../components/ui";
 
 const ROLES: Record<Role, { label: string; description: string }> = {
   guard: { label: "Guard", description: "Watches the live cameras, handles alerts, sees the access log. Cannot change anything else." },
@@ -12,16 +12,16 @@ const ROLES: Record<Role, { label: string; description: string }> = {
 };
 
 export function UsersPage() {
-  const { user: me } = useSession();
+  const { user: me, pushNotice } = useSession();
   const { data: users, error, loading, reload } = useAsync(() => api.users(), []);
   const [editing, setEditing] = useState<User | "new" | null>(null);
 
   const setActive = async (u: User, active: boolean) => {
-    try { await api.updateUser(u.id, { active }); reload(); } catch (e) { alert((e as Error).message); }
+    try { await api.updateUser(u.id, { active }); pushNotice(`${u.username} ${active ? "enabled" : "disabled"}`); reload(); } catch (e) { alert((e as Error).message); }
   };
   const remove = async (u: User) => {
     if (!confirm(`Delete user "${u.username}"? Their past actions stay in the audit log.`)) return;
-    try { await api.deleteUser(u.id); reload(); } catch (e) { alert((e as Error).message); }
+    try { await api.deleteUser(u.id); pushNotice(`User ${u.username} deleted`); reload(); } catch (e) { alert((e as Error).message); }
   };
 
   return (
@@ -74,6 +74,7 @@ export function UsersPage() {
 function UserForm({ user, isSelf, onClose, onSaved }: {
   user: User | null; isSelf: boolean; onClose: () => void; onSaved: () => void;
 }) {
+  const { pushNotice } = useSession();
   const [username, setUsername] = useState(user?.username ?? "");
   const [fullName, setFullName] = useState(user?.full_name ?? "");
   const [role, setRole] = useState<Role>(user?.role ?? "guard");
@@ -85,8 +86,13 @@ function UserForm({ user, isSelf, onClose, onSaved }: {
     setSaving(true);
     setError(null);
     try {
-      if (user) await api.updateUser(user.id, { full_name: fullName, role, ...(password ? { password } : {}) });
-      else await api.createUser({ username, full_name: fullName, role, password });
+      if (user) {
+        await api.updateUser(user.id, { full_name: fullName, role, ...(password ? { password } : {}) });
+        pushNotice("User saved");
+      } else {
+        await api.createUser({ username, full_name: fullName, role, password });
+        pushNotice(`User ${username} created`);
+      }
       onSaved();
     } catch (e) {
       setError((e as Error).message);
@@ -100,46 +106,51 @@ function UserForm({ user, isSelf, onClose, onSaved }: {
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" onClick={save}
+          <Button onClick={onClose} type="button">Cancel</Button>
+          <Button variant="primary" form="user-form"
                   disabled={saving || (!user && (username.trim().length < 3 || password.length < 8))}>
             {saving ? "Saving…" : "Save"}
           </Button>
         </>
       }
     >
-      <div className="flex flex-col gap-4">
-        {!user && (
-          <Field label="Username" hint="Used to sign in. Letters, digits, '.', '_' and '-'; cannot be changed later.">
-            <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus autoComplete="off" />
-          </Field>
-        )}
-        <Field label="Full name">
-          <input value={fullName} onChange={(e) => setFullName(e.target.value)} maxLength={80} autoFocus={!!user} />
-        </Field>
-        <div className="flex flex-col gap-1.5">
-          <span className="text-[13px] font-medium">Role</span>
-          {(Object.keys(ROLES) as Role[]).map((r) => (
-            <label key={r} className={cn(
-              "flex cursor-pointer items-start gap-2.5 rounded-lg border border-line-strong px-3 py-2.5 transition-colors",
-              role === r && "border-accent bg-accent/5",
-              isSelf && "cursor-default opacity-70",
-            )}>
-              <input type="radio" name="role" checked={role === r} disabled={isSelf} onChange={() => setRole(r)} className="mt-0.5" />
-              <span className="flex flex-col gap-0.5">
-                <strong className="font-medium">{ROLES[r].label}</strong>
-                <span className="text-[12px] text-muted">{ROLES[r].description}</span>
-              </span>
-            </label>
-          ))}
-          {isSelf && <span className="text-[12px] text-muted">You cannot change your own role.</span>}
-        </div>
-        <Field label={user ? "New password (optional)" : "Password"}
-               hint={user ? "Leave empty to keep the current one. Resetting signs the user out." : "At least 8 characters. Give it to the user in person."}>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
-        </Field>
+      <form id="user-form" className="flex flex-col gap-5" onSubmit={(e) => { e.preventDefault(); void save(); }}>
         <ErrorBox error={error} />
-      </div>
+        <FormSection title="Account">
+          {!user && (
+            <Field label="Username" hint="Used to sign in. Letters, digits, '.', '_' and '-'; cannot be changed later.">
+              <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus autoComplete="off" />
+            </Field>
+          )}
+          <Field label="Full name">
+            <input value={fullName} onChange={(e) => setFullName(e.target.value)} maxLength={80} autoFocus={!!user} />
+          </Field>
+        </FormSection>
+        <div className="h-px bg-line" />
+        <FormSection title="Role">
+          <div className="flex flex-col gap-1.5">
+            {(Object.keys(ROLES) as Role[]).map((r) => (
+              <label key={r} className={cn(
+                "flex cursor-pointer items-start gap-2.5 rounded-lg border border-line-strong px-3 py-2.5 transition-colors",
+                role === r && "border-accent bg-accent/5",
+                isSelf && "cursor-default opacity-70",
+              )}>
+                <input type="radio" name="role" checked={role === r} disabled={isSelf} onChange={() => setRole(r)} className="mt-0.5" />
+                <span className="flex flex-col gap-0.5">
+                  <strong className="font-medium">{ROLES[r].label}</strong>
+                  <span className="text-[12px] text-muted">{ROLES[r].description}</span>
+                </span>
+              </label>
+            ))}
+            {isSelf && <span className="text-[12px] text-muted">You cannot change your own role.</span>}
+          </div>
+        </FormSection>
+        <div className="h-px bg-line" />
+        <FormSection title={user ? "Password" : "Initial password"}
+                     hint={user ? "Leave empty to keep the current one. Resetting signs the user out." : "At least 8 characters. Give it to the user in person."}>
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
+        </FormSection>
+      </form>
     </Modal>
   );
 }

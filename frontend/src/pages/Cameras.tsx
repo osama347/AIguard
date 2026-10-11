@@ -3,7 +3,7 @@ import { api, subscribe, type Camera, type ProbeResult } from "../api/client";
 import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session";
 import { CAMERA_STATE, formatRelative } from "../lib/format";
-import { Badge, Button, Card, Empty, ErrorBox, Field, Modal, Notice, PageHeader, Spinner } from "../components/ui";
+import { Badge, Button, Card, Empty, ErrorBox, Field, FormSection, Modal, Notice, PageHeader, Spinner } from "../components/ui";
 
 // ------------------------------------------------------------------ source types
 
@@ -136,6 +136,7 @@ export function CamerasPage() {
 }
 
 function CameraForm({ camera, onClose, onSaved }: { camera: Camera | null; onClose: () => void; onSaved: () => void }) {
+  const { pushNotice } = useSession();
   const initial = camera ? parseSource(camera.source) : { kind: "csi" as Kind, value: "0", resolution: "" };
   const [name, setName] = useState(camera?.name ?? "");
   const [kind, setKind] = useState<Kind>(initial.kind);
@@ -165,8 +166,8 @@ function CameraForm({ camera, onClose, onSaved }: { camera: Camera | null; onClo
     setError(null);
     const body = { name, source, sample_fps: Number(fps), enabled };
     try {
-      if (camera) await api.updateCamera(camera.id, body);
-      else await api.createCamera(body);
+      if (camera) { await api.updateCamera(camera.id, body); pushNotice("Camera saved"); }
+      else { await api.createCamera(body); pushNotice("Camera added"); }
       onSaved();
     } catch (e) {
       setError((e as Error).message);
@@ -180,43 +181,46 @@ function CameraForm({ camera, onClose, onSaved }: { camera: Camera | null; onClo
       onClose={onClose}
       footer={
         <>
-          <Button onClick={test} disabled={probing || !value.trim()}>{probing ? "Testing…" : "Test connection"}</Button>
+          <Button type="button" onClick={test} disabled={probing || !value.trim()}>{probing ? "Testing…" : "Test connection"}</Button>
           <span className="flex-1" />
-          <Button onClick={onClose}>Cancel</Button>
+          <Button type="button" onClick={onClose}>Cancel</Button>
           <Button variant="primary" onClick={save} disabled={saving || !name.trim() || !value.trim()}>
             {saving ? "Saving…" : "Save"}
           </Button>
         </>
       }
     >
-      <div className="flex flex-col gap-4">
-        <Field label="Name" hint="Shown in the access log and alerts, e.g. “Main gate – entry”.">
-          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} autoFocus />
-        </Field>
-        <Field label="Camera type">
-          <select value={kind} onChange={(e) => { const nk = e.target.value as Kind; setKind(nk); setValue(nk === "csi" || nk === "usb" ? "0" : ""); setResolution(""); }}>
-            {(Object.keys(KINDS) as Kind[]).map((key) => <option key={key} value={key}>{KINDS[key].label}</option>)}
-          </select>
-        </Field>
-        <Field label={k.field} hint={k.hint}>
-          <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={k.placeholder} className={kind === "gst" ? "font-mono" : undefined} />
-        </Field>
-        {(kind === "csi" || kind === "usb") && (
-          <Field label="Resolution (optional)" hint={kind === "csi" ? "Default 1920x1080 at 30 fps." : "Default: the camera's own."}>
-            <input value={resolution} onChange={(e) => setResolution(e.target.value)} placeholder="1280x720" />
+      <div className="flex flex-col gap-5">
+        <ErrorBox error={error} />
+        <FormSection title="Camera" hint="Shown in the live page, the access log and alerts.">
+          <Field label="Name"><input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} autoFocus placeholder="Main gate – entry" /></Field>
+          <Field label="Camera type">
+            <select value={kind} onChange={(e) => { const nk = e.target.value as Kind; setKind(nk); setValue(nk === "csi" || nk === "usb" ? "0" : ""); setResolution(""); }}>
+              {(Object.keys(KINDS) as Kind[]).map((key) => <option key={key} value={key}>{KINDS[key].label}</option>)}
+            </select>
           </Field>
-        )}
-        <Field label="Frames analysed per second" hint="5 is plenty for a gate. Lower it when running many cameras.">
-          <input type="number" min={0.5} max={15} step={0.5} value={fps} onChange={(e) => setFps(e.target.value)} />
-        </Field>
-        <label className="flex items-center gap-2 text-[13px]">
+        </FormSection>
+        <div className="h-px bg-line" />
+        <FormSection title="Source">
+          <Field label={k.field} hint={k.hint}>
+            <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={k.placeholder} className={kind === "gst" ? "font-mono" : undefined} />
+          </Field>
+          {(kind === "csi" || kind === "usb") && (
+            <Field label="Resolution (optional)" hint={kind === "csi" ? "Default 1920x1080 at 30 fps." : "Default: the camera's own."}>
+              <input value={resolution} onChange={(e) => setResolution(e.target.value)} placeholder="1280x720" />
+            </Field>
+          )}
+          <Field label="Frames analysed per second" hint="5 is plenty for a gate. Lower it when running many cameras.">
+            <input type="number" min={0.5} max={15} step={0.5} value={fps} onChange={(e) => setFps(e.target.value)} />
+          </Field>
+          <div className="text-[12px] text-muted">Source: <code className="break-words">{describeSource(source)}</code></div>
+          {probe && (probe.ok
+            ? <Notice tone="ok">Connected: {probe.width}×{probe.height}{probe.fps ? ` at ${Math.round(probe.fps)} fps` : ""} ({probe.backend}).</Notice>
+            : <ErrorBox error={probe.error} />)}
+        </FormSection>
+        <label className="flex cursor-pointer items-center gap-2 text-[13px]">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled (analysed continuously)
         </label>
-        <div className="text-[12px] text-muted">Source: <code className="break-words">{describeSource(source)}</code></div>
-        {probe && (probe.ok
-          ? <Notice tone="ok">Connected: {probe.width}×{probe.height}{probe.fps ? ` at ${Math.round(probe.fps)} fps` : ""} ({probe.backend}).</Notice>
-          : <ErrorBox error={probe.error} />)}
-        <ErrorBox error={error} />
       </div>
     </Modal>
   );

@@ -1,17 +1,20 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useMemo, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, fetchProtectedImage, type Driver, type EnrollResult, type Status, type Vehicle } from "../api/client";
 import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session";
 import { STATUS_TONE, copyToClipboard, isValidPhone, whatsAppShareUrl } from "../lib/format";
 import { cn } from "../lib/cn";
-import { Badge, Button, Card, Empty, ErrorBox, Field, Modal, Notice, PageHeader, Select, Spinner } from "../components/ui";
+import { Badge, Button, Card, Chip, Empty, ErrorBox, Fact, Facts, Field, FormSection, Modal, Notice, PageHeader, Select, Spinner } from "../components/ui";
 
 const STATUSES: Status[] = ["active", "inactive", "blacklisted"];
 const PHOTO_ERRORS: Record<string, string> = { no_face: "no face found", invalid_image: "not a valid image" };
 
 const LINK = "text-accent hover:underline";
-const HEADING = "text-[11px] font-semibold uppercase tracking-wider text-faint";
+
+function Divider() {
+  return <div className="h-px w-full bg-line" />;
+}
 
 function useFilter<T>(items: T[] | undefined, text: (t: T) => string) {
   const [q, setQ] = useState("");
@@ -38,9 +41,9 @@ function EnrollSummary({ result }: { result: EnrollResult | null }) {
 }
 
 /** Renders Driver.photo_url, which requires admin auth that a plain <img src> can't
- *  send — fetched as a blob instead. `size` picks the CSS class (small table thumbnail
- *  vs. the larger editor preview); with no photo, renders the same-sized empty circle. */
-function DriverAvatar({ photoUrl, size }: { photoUrl?: string | null; size: "sm" | "lg" }) {
+ *  send — fetched as a blob instead. Falls back to an initials tile when there's no
+ *  photo. `size` picks the CSS class (small table thumbnail vs. larger preview). */
+function DriverAvatar({ photoUrl, name, size }: { photoUrl?: string | null; name?: string; size: "sm" | "lg" }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const cls = size === "lg" ? "avatar-lg" : "avatar";
 
@@ -56,7 +59,17 @@ function DriverAvatar({ photoUrl, size }: { photoUrl?: string | null; size: "sm"
     return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [photoUrl]);
 
-  return blobUrl ? <img className={cls} src={blobUrl} alt="" /> : <span className={cls} />;
+  return blobUrl
+    ? <img className={cls} src={blobUrl} alt="" />
+    : (
+      <span className={cn(
+        cls,
+        "inline-grid shrink-0 place-items-center font-semibold text-faint",
+        size === "sm" ? "text-[12px]" : "text-[26px]",
+      )}>
+        {name?.trim().slice(0, 1).toUpperCase() || "?"}
+      </span>
+    );
 }
 
 // ====================================================================== drivers ("People" tab)
@@ -85,7 +98,7 @@ function PeopleTab({ drivers, vehicles, isAdmin, onChanged }: {
               <tbody>
                 {filtered.map((d) => (
                   <tr key={d.id} className="cursor-pointer" onClick={() => setEditing(d)}>
-                    {isAdmin && <td><DriverAvatar photoUrl={d.photo_url} size="sm" /></td>}
+                    {isAdmin && <td><DriverAvatar photoUrl={d.photo_url} name={d.name} size="sm" /></td>}
                     <td><strong className="font-medium">{d.name}</strong>{d.is_owner && <span className="text-[12px] text-muted"> · Owner</span>}</td>
                     <td><Badge tone={STATUS_TONE[d.status]}>{d.status}</Badge></td>
                     <td>{d.photo_count ? d.photo_count : <Badge tone="warn">none</Badge>}</td>
@@ -104,29 +117,52 @@ function PeopleTab({ drivers, vehicles, isAdmin, onChanged }: {
           vehicles={vehicles}
           readOnly={!isAdmin}
           onClose={() => setEditing(null)}
-          onChanged={(d) => { if (d) setEditing(d); onChanged(); }}
+          onSaved={onChanged}
         />
       )}
     </>
   );
 }
 
-function DriverEditor({ driver, vehicles, readOnly, onClose, onChanged }: {
-  driver: Driver; vehicles: Vehicle[]; readOnly: boolean; onClose: () => void; onChanged: (d?: Driver) => void;
+/** Everything about a driver is changed through the single "Save changes" button:
+ *  typed details, brand-new profile photo and a pending photo removal are all staged
+ *  here and applied together, so there's never a half-saved driver. Face-photo
+ *  enrolment and vehicle authorization are separate, explicitly-confirmed actions. */
+function DriverEditor({ driver, vehicles, readOnly, onClose, onSaved }: {
+  driver: Driver; vehicles: Vehicle[]; readOnly: boolean; onClose: () => void; onSaved: () => void;
 }) {
-  const [form, setForm] = useState({ name: driver.name, phone: driver.phone, notes: driver.notes, status: driver.status });
-  const [photos, setPhotos] = useState<File[]>([]);
+  const { pushNotice } = useSession();
+  const [live, setLive] = useState(driver);
+  useEffect(() => setLive(driver), [driver]);
+  const initial = useMemo(
+    () => ({ name: driver.name, phone: driver.phone, notes: driver.notes, status: driver.status }),
+    [driver],
+  );
+  const [form, setForm] = useState(initial);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [removePhoto, setRemovePhoto] = useState(false);
+  const [faceFiles, setFaceFiles] = useState<File[]>([]);
   const [enrolled, setEnrolled] = useState<EnrollResult | null>(null);
   const [assignTo, setAssignTo] = useState<number | "">("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const run = async (fn: () => Promise<Driver | void>) => {
+  useEffect(() => {
+    if (!photoFile) { setPhotoPreview(null); return; }
+    const url = URL.createObjectURL(photoFile);
+    setPhotoPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [photoFile]);
+
+  const dirty = JSON.stringify(form) !== JSON.stringify(initial) || !!photoFile || removePhoto;
+
+  const run = async (fn: () => Promise<unknown>, ok: string) => {
     setBusy(true);
     setError(null);
     try {
-      const d = await fn();
-      onChanged(d || undefined);
+      await fn();
+      pushNotice(ok);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -134,54 +170,135 @@ function DriverEditor({ driver, vehicles, readOnly, onClose, onChanged }: {
     }
   };
 
-  const unassigned = vehicles.filter((v) => !driver.vehicles.some((dv) => dv.id === v.id));
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      if (removePhoto) await api.deleteDriverPhoto(driver.id);
+      if (photoFile) await api.setDriverPhoto(driver.id, photoFile);
+      await api.updateDriver(driver.id, form);
+      pushNotice("Driver saved");
+      onSaved();
+      onClose();
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  };
+
+  const enroll = async () => {
+    await run(async () => {
+      const r = await api.enrollPhotos(driver.id, faceFiles);
+      setEnrolled(r);
+      setFaceFiles([]);
+      setLive(r.driver);
+      return r;
+    }, "Face photos enrolled");
+    onSaved();
+  };
+
+  const unassign = async (vehicleId: number) => {
+    await run(async () => {
+      await api.unassign(driver.id, vehicleId);
+      setLive(await api.driver(driver.id));
+    }, "Authorization removed");
+    onSaved();
+  };
+
+  const assign = async () => {
+    await run(async () => {
+      const d = await api.assign(driver.id, Number(assignTo));
+      setAssignTo("");
+      setLive(d);
+      return d;
+    }, "Driver authorized");
+    onSaved();
+  };
+
+  const unassigned = vehicles.filter((v) => !live.vehicles.some((dv) => dv.id === v.id));
+  const shownPhoto = photoPreview ?? (removePhoto ? null : live.photo_url);
 
   return (
-    <Modal title={driver.name} onClose={onClose} wide>
-      <ErrorBox error={error} />
-      <div className="grid gap-6 md:grid-cols-2">
-        <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); run(() => api.updateDriver(driver.id, form)); }}>
-          <h3 className={HEADING}>Details</h3>
-          {!readOnly && (
-            <div className="flex items-center gap-3">
-              <DriverAvatar photoUrl={driver.photo_url} size="lg" />
-              <div className="flex flex-col gap-1">
-                <input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy}
-                       onChange={(e) => { const f = e.target.files?.[0]; if (f) run(() => api.setDriverPhoto(driver.id, f)); }} />
-                <span className="text-[12px] text-muted">PNG, JPEG or WebP, up to 2 MB.</span>
-                {driver.photo_url && (
-                  <button type="button" className={cn("self-start text-[13px]", LINK)} disabled={busy}
-                    onClick={() => run(() => api.deleteDriverPhoto(driver.id))}>Remove photo</button>
-                )}
-              </div>
+    <Modal
+      title={driver.name}
+      onClose={onClose}
+      footer={
+        readOnly ? (
+          <Button onClick={onClose}>Close</Button>
+        ) : (
+          <>
+            <Button variant="danger" disabled={busy} type="button" onClick={() => {
+              if (confirm(`Delete ${driver.name}?`)) void run(async () => { await api.deleteDriver(driver.id); onClose(); onSaved(); }, "Driver deleted");
+            }}>Delete</Button>
+            <span className="flex-1" />
+            <Button onClick={onClose} type="button" disabled={busy}>Cancel</Button>
+            <Button variant="primary" form="driver-form" disabled={busy || !dirty}>{busy ? <Spinner /> : "Save changes"}</Button>
+          </>
+        )
+      }
+    >
+      <form id="driver-form" className="flex flex-col gap-5" onSubmit={save}>
+        <ErrorBox error={error} />
+
+        <FormSection title="Profile photo" hint="A good front-facing portrait helps recognise the driver at the gate.">
+          <div className="flex items-center gap-4">
+            <DriverAvatar photoUrl={shownPhoto} name={form.name} size="lg" />
+            <div className="flex min-w-0 flex-col gap-2">
+              {!readOnly && (
+                <>
+                  <label className="flex cursor-pointer items-center gap-2 text-[13px]">
+                    <input
+                      type="file" accept="image/png,image/jpeg,image/webp" className="sr-only"
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) { setPhotoFile(f); setRemovePhoto(false); } }}
+                    />
+                    <span className="rounded-md border border-line-strong bg-surface px-3 py-1.5 font-medium hover:bg-surface-2">Choose photo…</span>
+                  </label>
+                  {photoFile && <span className="text-[12px] text-ok">1 new photo selected — saved when you press “Save changes”.</span>}
+                  {removePhoto && <span className="text-[12px] text-warn">Current photo will be removed when you press “Save changes”.</span>}
+                  {live.photo_url && !photoFile && !removePhoto && (
+                    <button type="button" className={cn("self-start text-[13px]", LINK)} onClick={() => setRemovePhoto(true)}>Remove current photo</button>
+                  )}
+                  {(photoFile || removePhoto) && (
+                    <button type="button" className="self-start text-[13px] text-muted hover:underline" onClick={() => { setPhotoFile(null); setRemovePhoto(false); }}>Undo</button>
+                  )}
+                </>
+              )}
+              {readOnly && <span className="text-[12px] text-muted">{live.photo_count ? "Photo set" : "No photo"}</span>}
             </div>
-          )}
-          <Field label="Full name"><input value={form.name} disabled={readOnly} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></Field>
+          </div>
+        </FormSection>
+
+        <Divider />
+
+        <FormSection title="Details">
+          <Field label="Full name"><input value={form.name} disabled={readOnly} onChange={(e) => setForm({ ...form, name: e.target.value })} required maxLength={120} /></Field>
           <Field label="Status" hint="Blacklisted drivers are always denied and raise a critical alert.">
             <StatusSelect value={form.status} onChange={(status) => setForm({ ...form, status })} />
           </Field>
-          <Field label="Phone"><input value={form.phone} disabled={readOnly} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
+          <Field label="Phone"><input value={form.phone} disabled={readOnly} onChange={(e) => setForm({ ...form, phone: e.target.value })} maxLength={40} /></Field>
           <Field label="Notes"><textarea rows={3} value={form.notes} disabled={readOnly} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
-          {!readOnly && <div className="flex flex-wrap gap-2">
-            <Button variant="primary" disabled={busy}>Save</Button>
-            <Button type="button" variant="danger" disabled={busy}
-              onClick={() => confirm(`Delete ${driver.name}?`) && run(async () => { await api.deleteDriver(driver.id); onClose(); })}>Delete</Button>
-          </div>}
-        </form>
+        </FormSection>
 
-        <div className="flex flex-col gap-3">
-          <h3 className={HEADING}>Face photos <span className="font-normal normal-case tracking-normal text-muted">({driver.photo_count} enrolled)</span></h3>
+        <Divider />
+
+        <FormSection title={`Face photos (${live.photo_count} enrolled)`} hint="Front-facing, well lit, one person per photo. Enrolment runs on its own — it doesn't need a Save.">
           {!readOnly && (
             <>
-              <input type="file" accept="image/*" multiple onChange={(e) => setPhotos(Array.from(e.target.files ?? []))} />
-              <div className="flex flex-wrap gap-2">
-                <Button disabled={busy || !photos.length}
-                  onClick={() => run(async () => { const r = await api.enrollPhotos(driver.id, photos); setEnrolled(r); setPhotos([]); return r.driver; })}>
-                  Enroll {photos.length || ""} photo(s)
+              <input type="file" accept="image/*" multiple onChange={(e) => setFaceFiles(Array.from(e.target.files ?? []))} />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" disabled={busy || !faceFiles.length}
+                  onClick={() => void enroll()}>
+                  Enrol {faceFiles.length || ""} photo(s)
                 </Button>
-                {driver.photo_count > 0 && (
-                  <button type="button" className={cn("text-[13px]", LINK)} disabled={busy}
-                    onClick={() => confirm("Remove all enrolled face photos?") && run(async () => { await api.clearPhotos(driver.id); return { ...driver, photo_count: 0 }; })}>
+                {faceFiles.length > 0 && (
+                  <button type="button" className="text-[13px] text-muted hover:underline" onClick={() => setFaceFiles([])}>Clear selection</button>
+                )}
+                {live.photo_count > 0 && (
+                  <button type="button" className={cn("ml-auto text-[13px]", LINK)} disabled={busy}
+                    onClick={() => {
+                      if (confirm("Remove all enrolled face photos?")) void run(async () => { await api.clearPhotos(driver.id); setLive((l) => ({ ...l, photo_count: 0 })); }, "Face photos removed");
+                    }}>
                     Remove all
                   </button>
                 )}
@@ -189,30 +306,35 @@ function DriverEditor({ driver, vehicles, readOnly, onClose, onChanged }: {
               <EnrollSummary result={enrolled} />
             </>
           )}
+          {readOnly && <span className="text-[13px] text-muted">{live.photo_count ? `${live.photo_count} enrolled` : "None enrolled."}</span>}
+        </FormSection>
 
-          <h3 className={HEADING}>Authorized vehicles</h3>
-          {driver.vehicles.length === 0 && <p className="text-[13px] text-muted">Not authorized for any vehicle.</p>}
+        <Divider />
+
+        <FormSection title="Authorized vehicles" hint={unassigned.length && !readOnly
+          ? "Each authorized driver can drive these plates."
+          : live.vehicles.length ? "Vehicles this driver is cleared to drive." : "No vehicles assigned yet."}>
+          {live.vehicles.length === 0 && <p className="m-0 text-[13px] text-muted">Not authorized for any vehicle.</p>}
           <ul className="m-0 list-none p-0">
-            {driver.vehicles.map((v) => (
+            {live.vehicles.map((v) => (
               <li key={v.id} className="flex items-center justify-between gap-3 border-b border-line py-2 last:border-b-0">
                 <span className="font-mono">{v.plate_number}</span>
-                {!readOnly && <Button size="sm" disabled={busy}
-                  onClick={() => run(async () => { await api.unassign(driver.id, v.id); return { ...driver, vehicles: driver.vehicles.filter((x) => x.id !== v.id) }; })}>
-                  Remove</Button>}
+                {!readOnly && <Button size="sm" type="button" disabled={busy} onClick={() => void unassign(v.id)}>Remove</Button>}
               </li>
             ))}
           </ul>
           {!readOnly && unassigned.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2">
-              <Select value={assignTo === "" ? "__none__" : String(assignTo)} onValueChange={(v) => setAssignTo(v === "__none__" ? "" : Number(v))}
-                      className="flex-1" placeholder="Choose vehicle…"
-                      options={[{ value: "__none__", label: "Choose vehicle…" }, ...unassigned.map((v) => ({ value: String(v.id), label: `${v.plate_number}${v.make ? ` · ${v.make} ${v.model}` : ""}` }))]} />
-              <Button disabled={busy || assignTo === ""}
-                onClick={() => run(async () => { const d = await api.assign(driver.id, Number(assignTo)); setAssignTo(""); return d; })}>Authorize</Button>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="flex-1">
+                <Select value={assignTo === "" ? "__none__" : String(assignTo)} onValueChange={(v) => setAssignTo(v === "__none__" ? "" : Number(v))}
+                        placeholder="Choose vehicle…"
+                        options={[{ value: "__none__", label: "Choose vehicle…" }, ...unassigned.map((v) => ({ value: String(v.id), label: `${v.plate_number}${v.make ? ` · ${v.make} ${v.model}` : ""}` }))]} />
+              </div>
+              <Button type="button" disabled={busy || assignTo === ""} onClick={() => void assign()}>Authorize</Button>
             </div>
           )}
-        </div>
-      </div>
+        </FormSection>
+      </form>
     </Modal>
   );
 }
@@ -223,6 +345,7 @@ function DriverEditor({ driver, vehicles, readOnly, onClose, onChanged }: {
 function DriverAuthorizeForm({ code: initialCode, codeReadOnly, onDone }: {
   code?: string; codeReadOnly?: boolean; onDone: (d: Driver) => void;
 }) {
+  const { pushNotice } = useSession();
   const [code, setCode] = useState(initialCode ?? "");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -237,6 +360,7 @@ function DriverAuthorizeForm({ code: initialCode, codeReadOnly, onDone }: {
     try {
       let d = await api.authorizeDriver(code.trim(), { name, phone });
       if (photos.length) d = (await api.enrollPhotos(d.id, photos)).driver;
+      pushNotice(`Driver ${d.name} added`);
       setName(""); setPhone(""); setPhotos([]);
       onDone(d);
     } catch (err) {
@@ -284,21 +408,47 @@ function DriverNames({ drivers, onPick }: { drivers: { id: number; name: string 
 /** Read-only profile card for a driver, opened by clicking their name from the Vehicles page. */
 function DriverCard({ driverId, onClose }: { driverId: number; onClose: () => void }) {
   const driver = useAsync(() => api.driver(driverId), [driverId]);
+  const d = driver.data;
   return (
-    <Modal title="Driver" onClose={onClose}>
+    <Modal title="Driver profile" onClose={onClose}>
       <ErrorBox error={driver.error} onRetry={driver.reload} />
-      {!driver.data ? <Spinner /> : (
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-[15px] font-semibold">{driver.data.name}</h2>
-            <Badge tone={STATUS_TONE[driver.data.status]}>{driver.data.status}</Badge>
+      {!d ? <div className="grid place-items-center py-12"><Spinner /></div> : (
+        <div className="flex flex-col gap-5">
+          <div className="flex items-center gap-4">
+            <DriverAvatar photoUrl={d.photo_url} name={d.name} size="lg" />
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-[16px] font-semibold tracking-tight">{d.name}</h2>
+                <Badge tone={STATUS_TONE[d.status]}>{d.status}</Badge>
+              </div>
+              <div className="text-[12.5px] text-muted">{d.is_owner ? "Vehicle owner" : "Authorized driver"}</div>
+              {d.phone && <div className="font-mono text-[13px]">{d.phone}</div>}
+            </div>
           </div>
-          <dl className="m-0 grid grid-cols-[max-content_minmax(0,1fr)] items-baseline gap-x-5 gap-y-2">
-            <dt className="text-muted">Phone</dt><dd className="m-0">{driver.data.phone || "—"}</dd>
-            <dt className="text-muted">Face photos</dt><dd className="m-0">{driver.data.photo_count ? `${driver.data.photo_count} enrolled` : <Badge tone="warn">none</Badge>}</dd>
-            <dt className="text-muted">Vehicles</dt><dd className="m-0 font-mono">{driver.data.vehicles.map((v) => v.plate_number).join(", ") || "—"}</dd>
-            {driver.data.notes && <><dt className="text-muted">Notes</dt><dd className="m-0">{driver.data.notes}</dd></>}
-          </dl>
+
+          <Divider />
+
+          <FormSection title="Vehicles" hint={d.vehicles.length ? "Plates this driver is cleared to drive." : "Not authorized for any vehicle."}>
+            {d.vehicles.length === 0 ? <p className="m-0 text-[13px] text-muted">—</p> : (
+              <ul className="m-0 flex list-none flex-col gap-2 p-0">
+                {d.vehicles.map((v) => (
+                  <li key={v.id}>
+                    <Chip>{v.plate_number}</Chip>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </FormSection>
+
+          <Divider />
+
+          <FormSection title="Profile">
+            <Facts>
+              <Fact label="Phone">{d.phone || "—"}</Fact>
+              <Fact label="Face photos">{d.photo_count ? `${d.photo_count} enrolled` : <Badge tone="warn">none</Badge>}</Fact>
+              {d.notes && <Fact label="Notes">{d.notes}</Fact>}
+            </Facts>
+          </FormSection>
         </div>
       )}
     </Modal>
@@ -309,7 +459,7 @@ function DriverCard({ driverId, onClose }: { driverId: number; onClose: () => vo
 function CopyCodeButton({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <Button onClick={async () => {
+    <Button type="button" onClick={async () => {
       if (await copyToClipboard(value)) { setCopied(true); setTimeout(() => setCopied(false), 1500); }
     }}>
       {copied ? "Copied!" : "Copy"}
@@ -318,15 +468,15 @@ function CopyCodeButton({ value }: { value: string }) {
 }
 
 /** Name + mandatory phone/WhatsApp + notes: the owner-specific fields, reused by the
- *  registration wizard (step 2) and by backfilling a legacy vehicle's owner. Doesn't
- *  call the API itself — the caller decides whether that's a combined vehicle+owner
- *  create or a plain "set owner" call. */
-function OwnerStep({ onBack, onNext, submitLabel }: {
+ *  registration wizard (step 2) and by backfilling a legacy vehicle's owner. Only ever
+ *  submitted through an explicit button — nothing happens on typing or tabbing away. */
+function OwnerStep({ initial, onBack, onNext, submitLabel }: {
+  initial?: { name: string; phone: string; notes: string };
   onBack?: () => void; onNext: (owner: { name: string; phone: string; notes: string }) => void; submitLabel: string;
 }) {
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [notes, setNotes] = useState("");
+  const [name, setName] = useState(initial?.name ?? "");
+  const [phone, setPhone] = useState(initial?.phone ?? "");
+  const [notes, setNotes] = useState(initial?.notes ?? "");
   const [touched, setTouched] = useState(false);
   const phoneOk = isValidPhone(phone);
 
@@ -343,6 +493,7 @@ function OwnerStep({ onBack, onNext, submitLabel }: {
       <Field label="Mobile / WhatsApp number" hint="Required — this is how the authorization code reaches them.">
         <input value={phone} onChange={(e) => setPhone(e.target.value)} required placeholder="+92 300 1234567" />
       </Field>
+      {touched && !name.trim() && <ErrorBox error="Enter the owner's name." />}
       {touched && !phoneOk && <ErrorBox error="Enter a valid phone number (7-15 digits)." />}
       <Field label="Notes (optional)"><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
       <div className="flex items-center gap-2">
@@ -356,6 +507,7 @@ function OwnerStep({ onBack, onNext, submitLabel }: {
 
 /** Backfills an owner onto a vehicle registered before this feature existed. */
 function SetOwnerModal({ vehicle, onClose, onSaved }: { vehicle: Vehicle; onClose: () => void; onSaved: () => void }) {
+  const { pushNotice } = useSession();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const submit = async (owner: { name: string; phone: string; notes: string }) => {
@@ -363,6 +515,7 @@ function SetOwnerModal({ vehicle, onClose, onSaved }: { vehicle: Vehicle; onClos
     setError(null);
     try {
       await api.setVehicleOwner(vehicle.id, owner);
+      pushNotice("Owner set");
       onSaved();
     } catch (err) {
       setError((err as Error).message);
@@ -371,13 +524,22 @@ function SetOwnerModal({ vehicle, onClose, onSaved }: { vehicle: Vehicle; onClos
   };
   return (
     <Modal title={`Set owner for ${vehicle.plate_number}`} onClose={onClose}>
-      <ErrorBox error={error} />
-      {busy ? <Spinner /> : <OwnerStep onNext={submit} submitLabel="Set owner" />}
+      <div className="flex flex-col gap-3">
+        <ErrorBox error={error} />
+        <p className="m-0 text-[13px] text-muted">The owner is auto-enrolled and authorized to drive this vehicle.</p>
+        {busy ? <Spinner /> : <OwnerStep onNext={submit} submitLabel="Set owner" />}
+      </div>
     </Modal>
   );
 }
 
 type WizardStep = "vehicle" | "owner" | "drivers";
+
+const WIZARD_STEPS: { key: WizardStep; label: string }[] = [
+  { key: "vehicle", label: "Vehicle" },
+  { key: "owner", label: "Owner" },
+  { key: "drivers", label: "Drivers" },
+];
 
 /** Register a vehicle → its owner → (optionally) further authorized drivers, in that
  *  order. Vehicle + owner are submitted together as one atomic request on the owner
@@ -385,13 +547,17 @@ type WizardStep = "vehicle" | "owner" | "drivers";
 export function RegisterVehicleWizard({ initialPlate, onClose, onDone }: {
   initialPlate?: string; onClose: () => void; onDone: () => void;
 }) {
+  const { pushNotice } = useSession();
   const [step, setStep] = useState<WizardStep>("vehicle");
   const [vehicleForm, setVehicleForm] = useState({ plate_number: initialPlate ?? "", make: "", model: "", color: "" });
+  const [ownerInfo, setOwnerInfo] = useState<{ name: string; phone: string; notes: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<Vehicle | null>(null);
   const [addedDrivers, setAddedDrivers] = useState<Driver[]>([]);
   const setV = (k: keyof typeof vehicleForm) => (e: { target: { value: string } }) => setVehicleForm({ ...vehicleForm, [k]: e.target.value });
+
+  const stepIndex = WIZARD_STEPS.findIndex((s) => s.key === step);
 
   const submitVehicleStep = (e: FormEvent) => {
     e.preventDefault();
@@ -402,9 +568,11 @@ export function RegisterVehicleWizard({ initialPlate, onClose, onDone }: {
   const submitOwner = async (owner: { name: string; phone: string; notes: string }) => {
     setBusy(true);
     setError(null);
+    setOwnerInfo(owner);
     try {
       const vehicle = await api.createVehicle({ ...vehicleForm, owner });
       setCreated(vehicle);
+      pushNotice(`${vehicle.plate_number} registered`);
       setStep("drivers");
     } catch (err) {
       setError((err as Error).message);
@@ -413,64 +581,108 @@ export function RegisterVehicleWizard({ initialPlate, onClose, onDone }: {
     }
   };
 
+  const goTo = (i: number) => {
+    // Only allow stepping back while still on the pre-registration steps, and never
+    // past the created vehicle (owner data is kept so going back doesn't lose it).
+    if (i < 0 || i > stepIndex) return;
+    if (step === "drivers") return;
+    setStep(WIZARD_STEPS[i].key as WizardStep);
+  };
+
   return (
-    <Modal title="Register a vehicle" onClose={onClose} wide>
-      <ErrorBox error={error} />
-      {step === "vehicle" && (
-        <form onSubmit={submitVehicleStep} className="flex flex-col gap-3">
-          <p className="text-[12px] text-muted">Step 1 of 3 — vehicle</p>
-          <Field label="Plate number"><input value={vehicleForm.plate_number} onChange={setV("plate_number")} required autoFocus className="font-mono" /></Field>
-          <div className="grid gap-3 md:grid-cols-3">
-            <Field label="Make"><input value={vehicleForm.make} onChange={setV("make")} /></Field>
-            <Field label="Model"><input value={vehicleForm.model} onChange={setV("model")} /></Field>
-            <Field label="Color"><input value={vehicleForm.color} onChange={setV("color")} /></Field>
-          </div>
-          <div className="flex items-center"><span className="flex-1" /><Button variant="primary">Next: Owner</Button></div>
-        </form>
-      )}
-
-      {step === "owner" && (
-        <div className="flex flex-col gap-3">
-          <p className="text-[12px] text-muted">Step 2 of 3 — owner (auto-enrolled and authorized to drive this vehicle)</p>
-          {busy ? <Spinner /> : <OwnerStep onBack={() => setStep("vehicle")} onNext={submitOwner} submitLabel="Register vehicle" />}
-        </div>
-      )}
-
-      {step === "drivers" && created && (
-        <div className="flex flex-col gap-3">
-          <p className="text-[12px] text-muted">Step 3 of 3 — authorized drivers (optional)</p>
-          <Notice tone="ok">
-            <strong>{created.plate_number} registered.</strong> Owner: {created.owner?.name}.
-          </Notice>
-
-          {created.auth_code && (
-            <Field label="Authorization code" hint="Share this with anyone the owner authorizes to drive — an admin can add them later with it, without the owner present.">
-              <div className="flex flex-wrap items-center gap-2">
-                <input value={created.auth_code} readOnly className="flex-1 font-mono" />
-                <CopyCodeButton value={created.auth_code} />
-                {created.owner?.phone && (
-                  <a className="inline-flex h-9 items-center rounded-md border border-line-strong bg-surface px-3.5 text-sm font-medium hover:bg-surface-2 hover:no-underline" target="_blank" rel="noreferrer"
-                     href={whatsAppShareUrl(created.owner.phone, `Guard++ authorization code for ${created.plate_number}: ${created.auth_code}`)}>
-                    Share via WhatsApp
-                  </a>
+    <Modal title="Register a vehicle" onClose={onClose}>
+      <div className="flex flex-col gap-5">
+        <div className="flex items-center gap-1.5">
+          {WIZARD_STEPS.map((s, i) => (
+            <Fragment key={s.key}>
+              {i > 0 && <div className={cn("h-px flex-1", i <= stepIndex ? "bg-ink" : "bg-line")} />}
+              <button
+                type="button"
+                disabled={i >= stepIndex}
+                onClick={() => goTo(i)}
+                className={cn(
+                  "flex items-center gap-1.5 text-[12px] font-medium transition-colors",
+                  i === stepIndex ? "text-text" : "text-muted hover:text-text",
                 )}
-              </div>
-            </Field>
-          )}
-
-          {addedDrivers.length > 0 && (
-            <>
-              <h3 className={HEADING}>Added so far</h3>
-              <ul className="m-0 list-none p-0">
-                {addedDrivers.map((d) => <li key={d.id} className="border-b border-line py-2 last:border-b-0">{d.name}</li>)}
-              </ul>
-            </>
-          )}
-          <DriverAuthorizeForm code={created.auth_code ?? ""} codeReadOnly onDone={(d) => setAddedDrivers((a) => [...a, d])} />
-
-          <div className="flex items-center"><span className="flex-1" /><Button variant="primary" onClick={onDone}>Done</Button></div>
+              >
+                <span className={cn(
+                  "grid size-5 place-items-center rounded-full text-[10.5px] font-semibold",
+                  i <= stepIndex ? "bg-ink text-ink-text" : "bg-surface-2 text-muted",
+                )}>
+                  {i + 1}
+                </span>
+                <span className={cn(i < stepIndex && "hidden sm:inline")}>{s.label}</span>
+              </button>
+            </Fragment>
+          ))}
         </div>
-      )}
+
+        <ErrorBox error={error} />
+
+        {step === "vehicle" && (
+          <form onSubmit={submitVehicleStep} className="flex flex-col gap-3">
+            <Field label="Plate number" hint="Matched ignoring spaces, dashes and case — e.g. “ABC 123” and “abc-123” are the same plate.">
+              <input value={vehicleForm.plate_number} onChange={setV("plate_number")} required autoFocus className="font-mono" placeholder="ABC 123" />
+            </Field>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Make"><input value={vehicleForm.make} onChange={setV("make")} maxLength={40} /></Field>
+              <Field label="Model"><input value={vehicleForm.model} onChange={setV("model")} maxLength={40} /></Field>
+            </div>
+            <Field label="Color"><input value={vehicleForm.color} onChange={setV("color")} maxLength={30} /></Field>
+            <div className="flex items-center"><span className="flex-1" /><Button variant="primary">Next: Owner</Button></div>
+          </form>
+        )}
+
+        {step === "owner" && (
+          <div className="flex flex-col gap-3">
+            <p className="m-0 text-[13px] text-muted">The owner is auto-enrolled and authorized to drive {vehicleForm.plate_number}. Vehicle and owner are registered together in one step.</p>
+            {busy ? <Spinner /> : (
+              <OwnerStep initial={ownerInfo ?? undefined} onBack={() => setStep("vehicle")} onNext={submitOwner} submitLabel="Register vehicle" />
+            )}
+          </div>
+        )}
+
+        {step === "drivers" && created && (
+          <div className="flex flex-col gap-5">
+            <Notice tone="ok">
+              <strong>{created.plate_number} registered.</strong> Owner: {created.owner?.name}.
+            </Notice>
+
+            {created.auth_code && (
+              <FormSection title="Authorization code" hint="Share this with anyone the owner authorizes to drive — an admin can add them later with it, without the owner present.">
+                <div className="flex flex-wrap items-end gap-2">
+                  <input value={created.auth_code} readOnly className="flex-1 font-mono" />
+                  <CopyCodeButton value={created.auth_code} />
+                  {created.owner?.phone && (
+                    <a className="inline-flex h-9 items-center rounded-md border border-line-strong bg-surface px-3.5 text-sm font-medium hover:bg-surface-2 hover:no-underline" target="_blank" rel="noreferrer"
+                       href={whatsAppShareUrl(created.owner.phone, `Guard++ authorization code for ${created.plate_number}: ${created.auth_code}`)}>
+                      Share via WhatsApp
+                    </a>
+                  )}
+                </div>
+              </FormSection>
+            )}
+
+            {addedDrivers.length > 0 && (
+              <> 
+                <Divider />
+                <FormSection title={`Added so far (${addedDrivers.length})`}>
+                  <ul className="m-0 list-none p-0">
+                    {addedDrivers.map((d) => <li key={d.id} className="border-b border-line py-2 last:border-b-0">{d.name}</li>)}
+                  </ul>
+                </FormSection>
+              </>
+            )}
+
+            <Divider />
+            <FormSection title="Add another driver (optional)" hint="Fine to skip — the owner can share the code later.">
+              <DriverAuthorizeForm code={created.auth_code ?? ""} codeReadOnly onDone={(d) => setAddedDrivers((a) => [...a, d])} />
+            </FormSection>
+
+            <div className="flex items-center"><span className="flex-1" /><Button variant="primary" onClick={onDone}>Done</Button></div>
+          </div>
+        )}
+      </div>
     </Modal>
   );
 }
@@ -598,21 +810,26 @@ export function FleetPage() {
 function VehicleEditor({ vehicle, readOnly, onClose, onSaved, onPickDriver }: {
   vehicle: Vehicle; readOnly: boolean; onClose: () => void; onSaved: () => void; onPickDriver: (id: number) => void;
 }) {
-  const [form, setForm] = useState({
-    plate_number: vehicle.plate_number, make: vehicle.make, model: vehicle.model,
-    color: vehicle.color, status: vehicle.status,
-  });
+  const { pushNotice } = useSession();
+  const initial = useMemo(
+    () => ({ plate_number: vehicle.plate_number, make: vehicle.make, model: vehicle.model, color: vehicle.color, status: vehicle.status }),
+    [vehicle],
+  );
+  const [form, setForm] = useState(initial);
+  const [owner, setOwner] = useState(vehicle.owner);
+  const [settingOwner, setSettingOwner] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [settingOwner, setSettingOwner] = useState(false);
+  const dirty = JSON.stringify(form) !== JSON.stringify(initial);
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value });
 
-  const submit = async (e: FormEvent) => {
+  const save = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
       await api.updateVehicle(vehicle.id, form);
+      pushNotice("Vehicle saved");
       onSaved();
     } catch (err) {
       setError((err as Error).message);
@@ -622,72 +839,102 @@ function VehicleEditor({ vehicle, readOnly, onClose, onSaved, onPickDriver }: {
 
   const remove = async () => {
     if (!confirm(`Delete vehicle ${vehicle.plate_number}?`)) return;
-    try { await api.deleteVehicle(vehicle.id); onSaved(); } catch (err) { setError((err as Error).message); }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.deleteVehicle(vehicle.id);
+      pushNotice("Vehicle deleted");
+      onSaved();
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
   };
 
-  const setOwner = async (owner: { name: string; phone: string; notes: string }) => {
-    try { await api.setVehicleOwner(vehicle.id, owner); onSaved(); } catch (err) { setError((err as Error).message); }
+  const setOwnerNow = async (o: { name: string; phone: string; notes: string }) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.setVehicleOwner(vehicle.id, o);
+      setOwner({ id: 0, name: o.name, phone: o.phone });
+      setSettingOwner(false);
+      pushNotice("Owner set");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const otherDrivers = vehicle.drivers.filter((d) => d.id !== vehicle.owner?.id);
 
   return (
-    <Modal title={vehicle.plate_number} onClose={onClose} wide
-      footer={!readOnly && <>
-        <Button variant="danger" onClick={remove} disabled={busy}>Delete</Button>
-        <span className="flex-1" />
-        <Button onClick={onClose}>Cancel</Button>
-        <Button variant="primary" form="vehicle-form" disabled={busy}>{busy ? <Spinner /> : "Save"}</Button>
-      </>}>
-      <div className="flex flex-col gap-3">
-        <form id="vehicle-form" onSubmit={submit} className="flex flex-col gap-3">
-          <ErrorBox error={error} />
-          <Field label="Plate number"><input value={form.plate_number} onChange={set("plate_number")} required disabled={readOnly} autoFocus className="font-mono" /></Field>
-          <div className="grid gap-3 md:grid-cols-3">
-            <Field label="Make"><input value={form.make} onChange={set("make")} disabled={readOnly} /></Field>
-            <Field label="Model"><input value={form.model} onChange={set("model")} disabled={readOnly} /></Field>
-            <Field label="Color"><input value={form.color} onChange={set("color")} disabled={readOnly} /></Field>
+    <Modal
+      title={vehicle.plate_number}
+      onClose={onClose}
+      footer={
+        readOnly ? (
+          <Button onClick={onClose}>Close</Button>
+        ) : (
+          <>
+            <Button variant="danger" type="button" disabled={busy} onClick={() => void remove()}>Delete</Button>
+            <span className="flex-1" />
+            <Button type="button" disabled={busy} onClick={onClose}>Cancel</Button>
+            <Button variant="primary" form="vehicle-form" disabled={busy || !dirty}>{busy ? <Spinner /> : "Save changes"}</Button>
+          </>
+        )
+      }
+    >
+      <form id="vehicle-form" className="flex flex-col gap-5" onSubmit={save}>
+        <ErrorBox error={error} />
+
+        <FormSection title="Details" hint="Plates are matched ignoring spaces, dashes and case.">
+          <Field label="Plate number"><input value={form.plate_number} onChange={set("plate_number")} required disabled={readOnly} autoFocus className="font-mono" placeholder="ABC 123" /></Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Make"><input value={form.make} onChange={set("make")} disabled={readOnly} maxLength={40} /></Field>
+            <Field label="Model"><input value={form.model} onChange={set("model")} disabled={readOnly} maxLength={40} /></Field>
           </div>
+          <Field label="Color"><input value={form.color} onChange={set("color")} disabled={readOnly} maxLength={30} /></Field>
           <Field label="Status" hint="Blacklisted vehicles are always denied.">
             <StatusSelect value={form.status} onChange={(status) => setForm({ ...form, status })} />
           </Field>
-        </form>
+        </FormSection>
 
-        <h3 className={HEADING}>Owner</h3>
-        {vehicle.owner ? (
-          <p className="m-0 text-[13px]">
-            <button type="button" className={LINK} onClick={() => onPickDriver(vehicle.owner!.id)}>{vehicle.owner.name}</button>
-            {" — "}{vehicle.owner.phone}
-          </p>
-        ) : (
-          <div className="flex flex-col gap-3">
+        <Divider />
+
+        <FormSection title="Owner" hint="The owner is auto-enrolled and holds the authorization code for this vehicle.">
+          {owner ? (
+            <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
+              <li className="flex flex-wrap items-center gap-2 text-[13px]">
+                <button type="button" className={LINK} onClick={() => onPickDriver(owner.id)}>{owner.name}</button>
+                {owner.phone && <span className="font-mono text-muted">{owner.phone}</span>}
+              </li>
+            </ul>
+          ) : (
             <p className="m-0 text-[13px] text-muted">No owner set — this vehicle was registered before this feature existed.</p>
-            {!readOnly && !settingOwner && <Button onClick={() => setSettingOwner(true)}>Set owner</Button>}
-            {settingOwner && <OwnerStep onBack={() => setSettingOwner(false)} onNext={setOwner} submitLabel="Set owner" />}
-          </div>
-        )}
-
-        {vehicle.owner && vehicle.auth_code && !readOnly && (
-          <>
-            <h3 className={HEADING}>Authorization code</h3>
-            <div className="flex flex-wrap items-center gap-2">
+          )}
+          {vehicle.auth_code && (
+            <div className="flex flex-wrap items-end gap-2">
               <input value={vehicle.auth_code} readOnly className="flex-1 font-mono" />
-              <CopyCodeButton value={vehicle.auth_code} />
-              <a className="inline-flex h-9 items-center rounded-md border border-line-strong bg-surface px-3.5 text-sm font-medium hover:bg-surface-2 hover:no-underline" target="_blank" rel="noreferrer"
-                 href={whatsAppShareUrl(vehicle.owner.phone, `Guard++ authorization code for ${vehicle.plate_number}: ${vehicle.auth_code}`)}>
-                Share via WhatsApp
-              </a>
+              {!readOnly && <CopyCodeButton value={vehicle.auth_code} />}
+              {owner?.phone && (
+                <a className="inline-flex h-9 items-center rounded-md border border-line-strong bg-surface px-3.5 text-sm font-medium hover:bg-surface-2 hover:no-underline" target="_blank" rel="noreferrer"
+                   href={whatsAppShareUrl(owner.phone, `Guard++ authorization code for ${vehicle.plate_number}: ${vehicle.auth_code}`)}>
+                  Share via WhatsApp
+                </a>
+              )}
             </div>
-          </>
-        )}
+          )}
+          {!readOnly && !owner && !settingOwner && <Button type="button" disabled={busy} onClick={() => setSettingOwner(true)}>Set owner</Button>}
+          {!readOnly && settingOwner && <OwnerStep onBack={() => setSettingOwner(false)} onNext={setOwnerNow} submitLabel="Set owner" />}
+        </FormSection>
 
-        <h3 className={HEADING}>Other authorized drivers</h3>
-        {otherDrivers.length === 0 ? (
-          <p className="m-0 text-[13px] text-muted">None yet — use "Add driver by code" from the Vehicles page.</p>
-        ) : (
+        <Divider />
+
+        <FormSection title="Other authorized drivers" hint={otherDrivers.length ? "Click a name to open their profile." : "None yet — use “Add driver by code” to redeem the owner's code."}>
           <p className="m-0 text-[13px]"><DriverNames drivers={otherDrivers} onPick={onPickDriver} /></p>
-        )}
-      </div>
+        </FormSection>
+      </form>
     </Modal>
   );
 }
