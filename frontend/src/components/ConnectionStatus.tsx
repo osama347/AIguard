@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useSession } from "../session";
-import { discoverServers, isDesktop, setServerUrl, type FoundServer } from "../api/client";
+import { isDesktop, setServerUrl } from "../api/client";
 import { formatBytes } from "../lib/format";
 import { cn } from "../lib/cn";
+import { ServerScanner } from "./ServerScanner";
 import { Badge, Button, Modal, Spinner, StatusDot } from "./ui";
 
 /** Label/tone for the topbar indicator, shared with the modal's status line. */
@@ -18,19 +19,12 @@ function ConnectionModal({ onClose }: { onClose: () => void }) {
   const { health, healthError, refreshHealth } = useSession();
   const [checking, setChecking] = useState(false);
   const [checkedAt, setCheckedAt] = useState<Date | null>(null);
-  const [scanning, setScanning] = useState(false);
-  const [found, setFound] = useState<FoundServer[] | null>(null);
 
   const checkNow = async () => {
     setChecking(true);
     await refreshHealth();
     setCheckedAt(new Date());
     setChecking(false);
-  };
-
-  const scan = async () => {
-    setScanning(true);
-    try { setFound(await discoverServers()); } catch { setFound([]); } finally { setScanning(false); }
   };
 
   const reconnect = async (url: string) => {
@@ -62,15 +56,7 @@ function ConnectionModal({ onClose }: { onClose: () => void }) {
           <div className="flex flex-col gap-2">
             <p className="text-[13px] text-muted">{healthError?.message ?? "The Guard++ device is not responding."}</p>
             {isDesktop ? (
-              <div className="flex flex-col gap-2">
-                <Button disabled={scanning} onClick={scan}>
-                  {scanning ? <Spinner label="Searching this network…" /> : "Search for it on this network"}
-                </Button>
-                {found && found.length === 0 && <p className="text-[12px] text-muted">Nothing found. Ask an administrator to check the device.</p>}
-                {found?.map((d) => (
-                  <Button key={d.url} size="sm" onClick={() => void reconnect(d.url)}>{d.name} — {d.url}</Button>
-                ))}
-              </div>
+              <ServerScanner onPick={(u) => void reconnect(u)} />
             ) : (
               <p className="text-[12px] text-muted">Ask an administrator to check the Guard++ service on the device.</p>
             )}

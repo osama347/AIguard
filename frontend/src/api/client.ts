@@ -317,11 +317,27 @@ export function subscribe(onEvent: (e: LiveEvent) => void, opts: { job?: string;
 
 export interface FoundServer { name: string; url: string }
 
-/** Asks the desktop shell to browse the LAN (mDNS) for Guard++ servers. Empty in a browser. */
+/** Asks the desktop shell to browse the LAN (mDNS) for Guard++ servers. Empty in a browser.
+ *  Each result's `name` is the mDNS hostname by default (e.g. "guardai-desktop.local"),
+ *  which a non-technical guard won't recognize — swapped for the server's own community
+ *  name (public, unauthenticated, usually instant on a LAN) when that answers in time. */
 export async function discoverServers(): Promise<FoundServer[]> {
   const invoke = (window as unknown as { __TAURI__?: { core?: { invoke?: (cmd: string) => Promise<unknown> } } }).__TAURI__?.core?.invoke;
   if (!isDesktop || !invoke) return [];
-  return (await invoke("discover_servers")) as FoundServer[];
+  const found = (await invoke("discover_servers")) as FoundServer[];
+  return Promise.all(found.map(async (d) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2000);
+    try {
+      const res = await fetch(`${d.url}/api/v1/community`, { signal: controller.signal });
+      const c = await res.json();
+      return c?.name ? { ...d, name: c.name as string } : d;
+    } catch {
+      return d;
+    } finally {
+      clearTimeout(timer);
+    }
+  }));
 }
 
 export interface UpdateCheckResult { available: boolean; current_version: string; latest_version: string | null }

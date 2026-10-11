@@ -6,6 +6,7 @@ import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session";
 import { formatBytes } from "../lib/format";
 import { cn } from "../lib/cn";
+import { ServerScanner } from "../components/ServerScanner";
 import { Badge, Button, Card, CardHead, ErrorBox, Fact, Facts, Field, FormSection, PageHeader, Spinner } from "../components/ui";
 
 export function SettingsPage() {
@@ -94,8 +95,12 @@ export function SettingsPage() {
       {isDesktop && (
         <Card>
           <CardHead title="Server" />
-          <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); setServerUrl(url || null); window.location.reload(); }}>
-            <Field label="Guard++ server address" hint="The Jetson's address, for example http://192.168.1.20:8090">
+          <div className="flex flex-col gap-2">
+            <strong className="text-[13px] font-medium">Devices found on this network</strong>
+            <ServerScanner onPick={(u) => { setServerUrl(u); window.location.reload(); }} />
+          </div>
+          <form className="mt-4 flex flex-wrap items-end gap-3 border-t border-line pt-4" onSubmit={(e) => { e.preventDefault(); setServerUrl(url || null); window.location.reload(); }}>
+            <Field label="Or enter the address directly" hint="The Jetson's address, for example http://192.168.1.20:8090">
               <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://192.168.1.20:8090" />
             </Field>
             <Button>Save &amp; reconnect</Button>

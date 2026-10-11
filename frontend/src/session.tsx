@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { notify, requestNotifications } from "./lib/notify";
-import { api, getToken, onAuthChange, setToken, subscribe, type Alert, type Community, type Health, type User } from "./api/client";
+import { api, discoverServers, getToken, isDesktop, onAuthChange, serverUrl, setServerUrl, setToken, subscribe, type Alert, type Community, type Health, type User } from "./api/client";
 
 export interface Notice {
   id: number;
@@ -72,6 +72,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const t = setInterval(poll, 10000);
     return () => clearInterval(t);
   }, [poll]);
+
+  // The Jetson's LAN address can change (DHCP) — a non-technical guard has no way to
+  // find the new one. If a previously-working connection drops, look for it again on
+  // the LAN before falling back to asking in Settings. One attempt per failure episode
+  // (resets once healthy again), and only acts on an unambiguous single match.
+  const autoReconnectTried = useRef(false);
+  useEffect(() => {
+    if (!healthError) { autoReconnectTried.current = false; return; }
+    if (!isDesktop || !serverUrl() || autoReconnectTried.current) return;
+    autoReconnectTried.current = true;
+    discoverServers().then((found) => {
+      if (found.length === 1 && found[0].url !== serverUrl()) {
+        setServerUrl(found[0].url);
+        refreshHealth();
+      }
+    }).catch(() => {});
+  }, [healthError, refreshHealth]);
 
   useEffect(() => {
     if (!token) { setUser(null); return; }

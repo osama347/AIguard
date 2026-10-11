@@ -1,6 +1,7 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { api, discoverServers, isDesktop, serverUrl, setServerUrl, setToken, type FoundServer } from "../api/client";
+import { useState, type FormEvent, type ReactNode } from "react";
+import { api, isDesktop, serverUrl, setServerUrl, setToken } from "../api/client";
 import { useSession } from "../session";
+import { ServerScanner } from "../components/ServerScanner";
 import { Brand, Button, ErrorBox, Field, Spinner } from "../components/ui";
 
 function AuthCard({ title, subtitle, wide, children }: { title: string; subtitle?: string; wide?: boolean; children: ReactNode }) {
@@ -31,8 +32,6 @@ export function ConnectPage() {
   const { healthError, refreshHealth } = useSession();
   const [url, setUrl] = useState(serverUrl() || (isDesktop ? "" : window.location.origin));
   const [busy, setBusy] = useState(false);
-  const [found, setFound] = useState<FoundServer[] | null>(null);
-  const [scanning, setScanning] = useState(false);
 
   const connect = async (target: string) => {
     setBusy(true);
@@ -41,11 +40,6 @@ export function ConnectPage() {
     setBusy(false);
   };
   const submit = (e: FormEvent) => { e.preventDefault(); void connect(url); };
-  const scan = async () => {
-    setScanning(true);
-    try { setFound(await discoverServers()); } catch { setFound([]); } finally { setScanning(false); }
-  };
-  useEffect(() => { if (isDesktop) void scan(); }, []);
 
   const configured = !!serverUrl();
   return (
@@ -57,12 +51,7 @@ export function ConnectPage() {
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
             <strong className="text-[13px] font-medium">Devices found on this network</strong>
-            {scanning && <Spinner label="Searching…" />}
-            {!scanning && found && found.length === 0 && <p className="text-[13px] text-muted">None found. Enter the address below.</p>}
-            {found?.map((d) => (
-              <Button key={d.url} className="justify-start" disabled={busy} onClick={() => void connect(d.url)}>{d.name} — {d.url}</Button>
-            ))}
-            {!scanning && <button type="button" className="btn-link self-start text-[13px]" onClick={() => void scan()}>Search again</button>}
+            <ServerScanner autoScan busy={busy} onPick={(u) => void connect(u)} />
           </div>
           <form onSubmit={submit} className="flex flex-col gap-3">
             <Field label="Server address" hint="The Jetson's address and port, for example http://192.168.1.20:8090">
