@@ -333,6 +333,114 @@ void FleetRepository::setVehicleOwner(int64_t vehicleId, const Driver& owner, co
 }
 
 // ======================================================================
+// AuthorizationRepository / SettingsRepository
+// ======================================================================
+
+namespace {
+
+const char* kAuthCols =
+    "a.id, a.vehicle_id, v.plate_number, a.driver_name, a.driver_phone, a.token_hash, a.status, "
+    "a.photo_dir, a.requested_by, COALESCE(a.authorized_driver_id, 0), a.created_at, a.expires_at, "
+    "COALESCE(a.decided_at, ''), COALESCE(o.name, ''), COALESCE(o.phone, '')";
+const char* kAuthFrom =
+    "FROM driver_authorizations a JOIN vehicles v ON v.id = a.vehicle_id "
+    "LEFT JOIN drivers o ON o.id = v.owner_id";
+
+DriverAuthorization readAuthorization(Stmt& st) {
+    DriverAuthorization a;
+    a.id = st.i64(0);
+    a.vehicleId = st.i64(1);
+    a.vehiclePlate = st.text(2);
+    a.driverName = st.text(3);
+    a.driverPhone = st.text(4);
+    a.tokenHash = st.text(5);
+    a.status = st.text(6);
+    a.photoDir = st.text(7);
+    a.requestedBy = st.text(8);
+    a.authorizedDriverId = st.i64(9);
+    a.createdAt = st.text(10);
+    a.expiresAt = st.text(11);
+    a.decidedAt = st.text(12);
+    a.ownerName = st.text(13);
+    a.ownerPhone = st.text(14);
+    return a;
+}
+
+} // namespace
+
+int64_t AuthorizationRepository::create(const DriverAuthorization& a) {
+    auto lk = db_.lock();
+    Stmt st(db_, "INSERT INTO driver_authorizations"
+                 "(vehicle_id, driver_name, driver_phone, token_hash, status, requested_by, expires_at) "
+                 "VALUES(?, ?, ?, ?, 'pending', ?, ?)");
+    st.bind(1, a.vehicleId).bind(2, a.driverName).bind(3, a.driverPhone).bind(4, a.tokenHash)
+      .bind(5, a.requestedBy).bind(6, a.expiresAt).run();
+    return db_.lastInsertId();
+}
+
+std::optional<DriverAuthorization> AuthorizationRepository::get(int64_t id) {
+    auto lk = db_.lock();
+    Stmt st(db_, std::string("SELECT ") + kAuthCols + " " + kAuthFrom + " WHERE a.id = ?");
+    st.bind(1, id);
+    if (!st.step()) return std::nullopt;
+    return readAuthorization(st);
+}
+
+std::optional<DriverAuthorization> AuthorizationRepository::byTokenHash(const std::string& tokenHash) {
+    auto lk = db_.lock();
+    Stmt st(db_, std::string("SELECT ") + kAuthCols + " " + kAuthFrom + " WHERE a.token_hash = ?");
+    st.bind(1, tokenHash);
+    if (!st.step()) return std::nullopt;
+    return readAuthorization(st);
+}
+
+std::vector<DriverAuthorization> AuthorizationRepository::list(int64_t vehicleId, bool pendingOnly) {
+    auto lk = db_.lock();
+    std::string sql = std::string("SELECT ") + kAuthCols + " " + kAuthFrom;
+    if (vehicleId != 0) sql += " WHERE a.vehicle_id = ?";
+    if (pendingOnly) sql += vehicleId != 0 ? " AND a.status = 'pending'" : " WHERE a.status = 'pending'";
+    sql += " ORDER BY a.created_at DESC, a.id DESC";
+    Stmt st(db_, sql);
+    if (vehicleId != 0) st.bind(1, vehicleId);
+    std::vector<DriverAuthorization> out;
+    while (st.step()) out.push_back(readAuthorization(st));
+    return out;
+}
+
+void AuthorizationRepository::setPhotoDir(int64_t id, const std::string& dir) {
+    auto lk = db_.lock();
+    Stmt st(db_, "UPDATE driver_authorizations SET photo_dir = ? WHERE id = ?");
+    st.bind(1, dir).bind(2, id).run();
+}
+
+bool AuthorizationRepository::decide(int64_t id, const std::string& status, int64_t authorizedDriverId) {
+    auto lk = db_.lock();
+    Stmt st(db_, "UPDATE driver_authorizations SET status = ?, decided_at = datetime('now'), "
+                 "authorized_driver_id = ? WHERE id = ? AND status = 'pending'");
+    // authorized_driver_id REFERENCES drivers(id): 0 (every non-approval) must bind
+    // NULL, not the literal 0, or the foreign key rejects it (no driver has id 0).
+    const std::optional<int64_t> driverId = authorizedDriverId > 0
+        ? std::optional<int64_t>(authorizedDriverId) : std::nullopt;
+    st.bind(1, status).bind(2, driverId).bind(3, id).run();
+    return db_.changes() > 0;
+}
+
+std::string SettingsRepository::get(const std::string& key, const std::string& def) {
+    auto lk = db_.lock();
+    Stmt st(db_, "SELECT value FROM app_settings WHERE key = ?");
+    st.bind(1, key);
+    if (!st.step()) return def;
+    return st.text(0);
+}
+
+void SettingsRepository::set(const std::string& key, const std::string& value) {
+    auto lk = db_.lock();
+    Stmt st(db_, "INSERT INTO app_settings(key, value, updated_at) VALUES(?, ?, datetime('now')) "
+                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at");
+    st.bind(1, key).bind(2, value).run();
+}
+
+// ======================================================================
 // JobRepository
 // ======================================================================
 

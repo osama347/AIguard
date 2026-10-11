@@ -1,5 +1,6 @@
 #pragma once
 #include "app/frame_annotator.h"
+#include "common/config.h"
 #include "domain/access_policy.h"
 #include "domain/face_matcher.h"
 #include "infra/inference_client.h"
@@ -7,6 +8,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -25,8 +27,8 @@ struct PhotoOutcome {
 // ---------------------------------------------------------------------------
 class FleetService {
 public:
-    FleetService(FleetRepository& fleet, EventRepository& events, InferenceClient& inference,
-                 float matchThreshold);
+    FleetService(FleetRepository& fleet, EventRepository& events, AuthorizationRepository& authz,
+                 const CoreConfig& cfg, InferenceClient& inference, float matchThreshold);
 
     std::vector<Driver> listDrivers() { return fleet_.listDrivers(); }
     Driver getDriver(int64_t id);
@@ -66,6 +68,36 @@ public:
     void assign(int64_t driverId, int64_t vehicleId, const std::string& actor);
     void unassign(int64_t driverId, int64_t vehicleId, const std::string& actor);
 
+    // ------------------------------------------------- owner-approved requests
+    // Captures a driver's details (and optional face photos) and mints a single-use
+    // token; the driver is NOT created until the vehicle's owner confirms. `token`
+    // in the result is the raw one-time secret (only available here) that goes into
+    // the confirmation link; only its SHA-256 is stored.
+    struct AuthorizationCreated {
+        DriverAuthorization authorization;
+        std::string token;
+    };
+    AuthorizationCreated createAuthorization(int64_t vehicleId, Driver driver,
+        const std::vector<std::pair<std::string, std::string>>& photos,
+        int expiresHours, const std::string& actor);
+
+    std::vector<DriverAuthorization> listAuthorizations(int64_t vehicleId, bool pendingOnly);
+    std::optional<DriverAuthorization> authorization(int64_t id);
+    // Resolves a link token (marking it expired lazily); nullopt if unrecognized.
+    std::optional<DriverAuthorization> authorizationByToken(const std::string& token);
+    void cancelAuthorization(int64_t id, const std::string& actor);
+
+    // Applies the owner's decision. On approval the driver is created, assigned,
+    // and their staged photos enrolled (best effort). Throws ConflictError if the
+    // request was already decided or has expired (the row is marked expired).
+    struct AuthorizationResult {
+        std::string status;                    // approved | denied
+        std::optional<Driver> driver;
+        std::vector<PhotoOutcome> photos;
+        bool photosPending = false;            // staged photos exist but couldn't be enrolled
+    };
+    AuthorizationResult decideAuthorization(const std::string& token, bool approve, const std::string& actor);
+
     // Fleet data for interpreting frames (one job, or one camera for a while).
     std::shared_ptr<const FaceMatcher> matcher();
     FleetSnapshot snapshot();
@@ -74,9 +106,13 @@ public:
 
 private:
     void invalidate() { ++version_; }
+    std::string pendingDir(const std::string& name) const;
+    void removeStagedPhotos(const std::string& dir);
 
     FleetRepository& fleet_;
     EventRepository& events_;
+    AuthorizationRepository& authz_;
+    const CoreConfig& cfg_;
     InferenceClient& inference_;
     float matchThreshold_;
 

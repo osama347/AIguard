@@ -269,7 +269,41 @@ const char* imageExtension(const std::string& b) {
     return nullptr;
 }
 
+// The base URL used to build confirmation links shared externally (e.g. over WhatsApp,
+// where the owner's phone needs to reach this server from outside the LAN — hence the
+// admin-configurable override in /api/v1/settings, typically an ngrok/Cloudflare tunnel).
+// Falls back to this request's own Host header, which only works if the recipient is on
+// the same LAN as the Jetson.
+std::string publicBaseUrl(ApiDeps& deps, const Req& req) {
+    std::string v = trimmed(deps.settings.get("public_base_url", ""));
+    while (!v.empty() && v.back() == '/') v.pop_back();
+    if (!v.empty()) return v;
+    const std::string host = req.get_header_value("Host");
+    return host.empty() ? "" : ("http://" + host);
+}
+
 } // namespace
+
+static std::string confirmPage(const DriverAuthorization& a, const std::string& token) {
+    std::stringstream html;
+    html << "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Confirm driver authorization</title><style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;padding:24px;background:#f6f7f8;color:#111827}main{max-width:520px;margin:0 auto;background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(15,23,42,0.08),0 10px 40px -20px rgba(15,23,42,0.6);padding:24px}h1{margin:0 0 8px;font-size:20px}p{margin:6px 0;line-height:1.5}.row{display:flex;gap:12px;margin-top:18px;flex-wrap:wrap}button{flex:1;min-width:140px;border:0;border-radius:10px;padding:12px 16px;font-weight:600;cursor:pointer}#approve{background:#111827;color:#fff}#deny{background:#e5e7eb;color:#111827}.status{margin-top:16px;font-size:14px;color:#374151}</style></head><body><main><h1>Owner approval</h1><p>A request to authorize <strong>" << a.driverName << "</strong> ("
+         << a.driverPhone << ") to drive <strong>" << a.vehiclePlate << "</strong> is awaiting your confirmation.</p><p>Requested by <strong>"
+         << a.requestedBy << "</strong>. This link expires at <strong>" << a.expiresAt << "</strong> (UTC).</p><div class=\"row\"><button id=\"approve\">Approve</button><button id=\"deny\">Deny</button></div><div class=\"status\" id=\"status\"></div></main><script>const token=" << json(token).dump() << ";async function act(approve){const st=document.getElementById('status');st.textContent='Submitting...';try{const r=await fetch('/api/v1/authorizations/respond',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,approve})});const j=await r.json();if(r.ok){st.textContent=j.status==='approved'?'Approved. The driver can now access the gate.':'Denied.';document.querySelectorAll('button').forEach(b=>b.disabled=true);}else{st.textContent=j.message||'Request failed';}}catch(e){st.textContent='Network error';}}document.getElementById('approve').onclick=()=>act(true);document.getElementById('deny').onclick=()=>act(false);</script></body></html>";
+    return html.str();
+}
+
+static json authorizationCreatedJson(const FleetService::AuthorizationCreated& c, const std::string& link) {
+    return {{"authorization", toJson(c.authorization)}, {"token", c.token}, {"link", link}};
+}
+
+static json authorizationDecisionJson(const FleetService::AuthorizationResult& r) {
+    json photos = json::array();
+    for (const auto& o : r.photos)
+        photos.push_back({{"filename", o.filename}, {"enrolled", o.enrolled},
+                          {"error", o.error.empty() ? json(nullptr) : json(o.error)}});
+    return {{"status", r.status}, {"driver", r.driver ? toJson(*r.driver, true) : json(nullptr)},
+            {"photos", photos}, {"photos_pending", r.photosPending}};
+}
 
 void registerApi(httplib::Server& svr, ApiDeps d) {
     const auto started = std::chrono::steady_clock::now();
@@ -689,6 +723,119 @@ void registerApi(httplib::Server& svr, ApiDeps d) {
         });
     });
 
+    // ------------------------------------------------------------ settings (admin)
+    svr.Get("/api/v1/settings", [deps, requireAdmin](const Req& req, Res& res) {
+        guarded(res, [&] {
+            requireAdmin(req);
+            const std::string url = deps->settings.get("public_base_url", "");
+            sendJson(res, {{"public_base_url", url.empty() ? json(nullptr) : json(url)}});
+        });
+    });
+
+    svr.Put("/api/v1/settings", [deps, requireAdmin](const Req& req, Res& res) {
+        guarded(res, [&] {
+            User u = requireAdmin(req);
+            json b = parseBody(req);
+            if (b.contains("public_base_url")) {
+                std::string v = b["public_base_url"].is_null() ? "" : trimmed(b["public_base_url"].get<std::string>());
+                while (!v.empty() && v.back() == '/') v.pop_back();
+                if (v.size() > 300) throw ValidationError("public_base_url is too long");
+                deps->settings.set("public_base_url", v);
+                deps->events.audit(u.username, "update", "settings", "public_base_url");
+            }
+            const std::string url = deps->settings.get("public_base_url", "");
+            sendJson(res, {{"public_base_url", url.empty() ? json(nullptr) : json(url)}});
+        });
+    });
+
+    // ---------------------------------------- driver authorizations (owner-approved)
+    // An admin requests a new (non-owner) driver be authorized for a vehicle; the
+    // vehicle's owner approves or denies out-of-band via a one-time link (typically
+    // shared over WhatsApp) instead of the admin redeeming the owner's reusable code
+    // above. See FleetService::createAuthorization / decideAuthorization.
+    svr.Get("/api/v1/authorizations", [deps, requireAdmin](const Req& req, Res& res) {
+        guarded(res, [&] {
+            requireAdmin(req);
+            int64_t vehicleId = 0;
+            if (req.has_param("vehicle_id")) {
+                try { vehicleId = std::stoll(req.get_param_value("vehicle_id")); }
+                catch (...) { throw ValidationError("invalid vehicle_id"); }
+            }
+            const bool pendingOnly = req.get_param_value("pending") == "true";
+            json arr = json::array();
+            for (const auto& a : deps->fleet.listAuthorizations(vehicleId, pendingOnly)) arr.push_back(toJson(a));
+            sendJson(res, {{"items", arr}});
+        });
+    });
+
+    svr.Post("/api/v1/authorizations", [deps, requireAdmin](const Req& req, Res& res) {
+        guarded(res, [&] {
+            User u = requireAdmin(req);
+            if (!req.is_multipart_form_data()) throw ValidationError("expected multipart/form-data");
+            if (!req.form.has_field("vehicle_id")) throw ValidationError("vehicle_id is required");
+            int64_t vehicleId;
+            try { vehicleId = std::stoll(req.form.get_field("vehicle_id")); }
+            catch (...) { throw ValidationError("invalid vehicle_id"); }
+            Driver driver;
+            driver.name = req.form.get_field("driver_name");
+            driver.phone = req.form.get_field("driver_phone");
+            driver.notes = req.form.get_field("driver_notes");
+            int expiresHours = 48;
+            if (req.form.has_field("expires_hours")) {
+                try { expiresHours = std::stoi(req.form.get_field("expires_hours")); }
+                catch (...) { throw ValidationError("invalid expires_hours"); }
+            }
+            expiresHours = std::max(1, std::min(168, expiresHours));
+            std::vector<std::pair<std::string, std::string>> photos;
+            for (const auto& f : req.form.get_files("photos")) photos.emplace_back(f.filename, f.content);
+            const std::string base = publicBaseUrl(*deps, req);
+            auto created = deps->fleet.createAuthorization(vehicleId, driver, photos, expiresHours, u.username);
+            const std::string link = base.empty() ? ("/confirm/" + created.token) : (base + "/confirm/" + created.token);
+            sendJson(res, authorizationCreatedJson(created, link), 201);
+        });
+    });
+
+    svr.Post(R"(/api/v1/authorizations/(\d+)/cancel)", [deps, requireAdmin](const Req& req, Res& res) {
+        guarded(res, [&] {
+            User u = requireAdmin(req);
+            deps->fleet.cancelAuthorization(idParam(req), u.username);
+            res.status = 204;
+        });
+    });
+
+    // Public: the owner has no Guard++ account, so this and the confirmation page
+    // below carry no auth — the one-time token in the link is the credential.
+    svr.Post("/api/v1/authorizations/respond", [deps](const Req& req, Res& res) {
+        guarded(res, [&] {
+            json b = parseBody(req);
+            const std::string token = b.value("token", "");
+            if (token.empty()) throw ValidationError("token is required");
+            auto result = deps->fleet.decideAuthorization(token, b.value("approve", false), "owner");
+            sendJson(res, authorizationDecisionJson(result));
+        });
+    });
+
+    svr.Get(R"(/confirm/([A-Za-z0-9]+))", [deps](const Req& req, Res& res) {
+        try {
+            const std::string token = req.matches[1];
+            auto a = deps->fleet.authorizationByToken(token);
+            if (!a) {
+                res.status = 404;
+                res.set_content("<!doctype html><title>Not found</title><p>This link is not valid.</p>", "text/html");
+                return;
+            }
+            if (a->status != "pending") {
+                res.set_content("<!doctype html><title>Guard++</title><p>This request was already " + a->status + ".</p>", "text/html");
+                return;
+            }
+            res.set_content(confirmPage(*a, token), "text/html");
+        } catch (const std::exception& e) {
+            LOG(Error) << "confirm page error: " << e.what();
+            res.status = 500;
+            res.set_content("<!doctype html><title>Guard++</title><p>Something went wrong.</p>", "text/html");
+        }
+    });
+
     // ------------------------------------------------------------ cameras
     auto cameraJson = [deps](const Camera& c) {
         json j = toJson(c);
@@ -1077,6 +1224,7 @@ void registerApi(httplib::Server& svr, ApiDeps d) {
                             {"active_admins", admins}, {"active_guards", guards}}}});
         });
     });
+
 
     // ------------------------------------------------------------ frontend
     const std::string ui = deps->cfg.paths.frontendDir;

@@ -18,6 +18,7 @@ nlohmann::json toJson(const Driver& d, bool includePhoto = false);
 nlohmann::json toJson(const Vehicle& v, bool includeAuthCode = false);
 nlohmann::json toJson(const Job& j, int queuePosition = -1);
 nlohmann::json toJson(const Camera& c);
+nlohmann::json toJson(const DriverAuthorization& a);
 nlohmann::json toJson(const AccessEvent& e);
 nlohmann::json toJson(const Alert& a);
 nlohmann::json toJson(const User& u);

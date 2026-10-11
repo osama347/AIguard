@@ -69,6 +69,15 @@ json toJson(const AccessEvent& e) {
             {"details", e.detailsJson.empty() ? json::object() : json::parse(e.detailsJson, nullptr, false)}};
 }
 
+json toJson(const DriverAuthorization& a) {
+    json j = {{"id", a.id}, {"vehicle_id", a.vehicleId}, {"vehicle_plate", a.vehiclePlate},
+               {"driver_name", a.driverName}, {"driver_phone", a.driverPhone}, {"status", a.status},
+               {"requested_by", a.requestedBy}, {"authorized_driver_id", a.authorizedDriverId},
+               {"created_at", isoTime(a.createdAt)}, {"expires_at", isoTime(a.expiresAt)},
+               {"decided_at", isoTime(a.decidedAt)}, {"owner_name", a.ownerName}, {"owner_phone", a.ownerPhone}};
+    return j;
+}
+
 json toJson(const Alert& a) {
     return {{"id", a.id}, {"created_at", isoTime(a.createdAt)}, {"severity", a.severity}, {"kind", a.kind},
             {"message", a.message},

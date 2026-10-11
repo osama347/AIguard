@@ -18,6 +18,7 @@ struct ApiDeps {
     JobService& jobs;
     CameraService& cameras;
     CommunityRepository& community;
+    SettingsRepository& settings;
     EventRepository& events;
     StatsRepository& stats;
     InferenceClient& inference;

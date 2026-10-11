@@ -23,6 +23,12 @@ export type Role = Schemas["Role"];
 export type UserInput = Schemas["UserInput"];
 export type LoginResult = Schemas["LoginResult"];
 export type EnrollResult = Schemas["EnrollResult"];
+export type DriverAuthorization = Schemas["DriverAuthorization"];
+export type AuthorizationCreated = Schemas["AuthorizationCreated"];
+export type AuthorizationDecision = Schemas["AuthorizationDecision"];
+export type AuthorizationList = Schemas["AuthorizationList"];
+export type Settings = Schemas["Settings"];
+export type SettingsInput = Schemas["SettingsInput"];
 export type Verdict = Schemas["Verdict"];
 export type Status = Schemas["Status"];
 export type Camera = Schemas["Camera"];
@@ -179,6 +185,20 @@ export const api = {
   me: () => get<User>("/auth/me"),
   changePassword: (current_password: string, new_password: string) =>
     post<void>("/auth/password", { current_password, new_password }),
+
+  settings: () => get<Settings>("/settings"),
+  saveSettings: (s: SettingsInput) => put<Settings>("/settings", s),
+
+  authorizations: (params: { vehicle_id?: number; pending?: boolean } = {}) => {
+    const q = new URLSearchParams();
+    if (params.vehicle_id !== undefined) q.set("vehicle_id", String(params.vehicle_id));
+    if (params.pending !== undefined) q.set("pending", String(params.pending));
+    const qs = q.toString();
+    return get<AuthorizationList>(`/authorizations${qs ? "?" + qs : ""}`).then((r) => r.items);
+  },
+  createAuthorization: (form: FormData) => post<AuthorizationCreated>("/authorizations", form),
+  cancelAuthorization: (id: number) => post<void>(`/authorizations/${id}/cancel`),
+  respondAuthorization: (token: string, approve: boolean) => post<AuthorizationDecision>("/authorizations/respond", { token, approve }),
 
   dashboard: () => get<Dashboard>("/dashboard"),
 

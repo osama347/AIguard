@@ -60,11 +60,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const serverReachable = health !== null;
   useEffect(() => { if (serverReachable) refreshCommunity(); }, [serverReachable, refreshCommunity]);
 
+  // Keep branding fresh: when an admin changes the community name or logo the sidebars
+  // and login screen pick it up without a reload (the community endpoint is public + tiny).
+  const poll = useCallback(async () => {
+    await refreshHealth();
+    refreshCommunity();
+  }, [refreshHealth, refreshCommunity]);
+
   useEffect(() => {
     refreshHealth();
-    const t = setInterval(refreshHealth, 10000);
+    const t = setInterval(poll, 10000);
     return () => clearInterval(t);
-  }, [refreshHealth]);
+  }, [poll]);
 
   useEffect(() => {
     if (!token) { setUser(null); return; }
@@ -94,6 +101,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const signIn = (t: string, u: User) => {
     setToken(t);
     setUser(u);
+    refreshCommunity();
     requestNotifications();
   };
 

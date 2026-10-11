@@ -36,6 +36,24 @@ struct Vehicle {
     std::vector<DriverRef> drivers;
 };
 
+// A request to authorize a new (non-owner) driver for a vehicle, which the
+// vehicle's owner must confirm out-of-band before the driver is created.
+// The stored token is a hash; the raw token only travels in the confirmation link.
+struct DriverAuthorization {
+    int64_t id = 0;
+    int64_t vehicleId = 0;
+    std::string vehiclePlate;              // joined for display
+    std::string driverName;
+    std::string driverPhone;
+    std::string tokenHash;
+    std::string status = "pending";        // pending | approved | denied | cancelled | expired
+    std::string photoDir;                  // staged face photos (media/pending/<dir>), "" = none
+    std::string requestedBy;
+    int64_t authorizedDriverId = 0;        // set once approved
+    std::string createdAt, expiresAt, decidedAt;
+    std::string ownerName, ownerPhone;     // joined for display / messaging
+};
+
 // One driver's enrolled face templates, as used by the matcher.
 struct Identity {
     int64_t driverId = 0;

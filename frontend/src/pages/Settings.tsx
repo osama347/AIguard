@@ -69,6 +69,24 @@ export function SettingsPage() {
   };
   const models = system.data?.models as { state?: string; models?: string[]; trt_version?: string; device?: string; precision?: string } | null | undefined;
 
+  const appSettings = useAsync(() => api.settings(), []);
+  const [baseUrl, setBaseUrl] = useState("");
+  useEffect(() => { if (appSettings.data) setBaseUrl(appSettings.data.public_base_url ?? ""); }, [appSettings.data]);
+  const [savingBaseUrl, setSavingBaseUrl] = useState(false);
+  const [baseUrlErr, setBaseUrlErr] = useState<string | null>(null);
+  const saveBaseUrl = async () => {
+    setSavingBaseUrl(true);
+    setBaseUrlErr(null);
+    try {
+      await api.saveSettings({ public_base_url: baseUrl.trim() || null });
+      pushNotice("Settings saved");
+    } catch (e) {
+      setBaseUrlErr((e as Error).message);
+    } finally {
+      setSavingBaseUrl(false);
+    }
+  };
+
   return (
     <>
       <PageHeader title="Settings" />
@@ -134,6 +152,19 @@ export function SettingsPage() {
               </div>
               {logo && <span className="text-[12px] text-ok">New logo selected — press “Save logo” to apply it.</span>}
             </div>
+          </div>
+        </Card>
+      )}
+
+      {isAdmin && (
+        <Card>
+          <CardHead title="Driver approvals" sub="Used to build the link sent to a vehicle owner to approve a new driver remotely." />
+          <ErrorBox error={baseUrlErr} />
+          <Field label="Public base URL" hint="Only needed if owners are off your LAN — a tunnel address (ngrok, Cloudflare) reachable from outside. Leave blank to use this server's LAN address, which only works if the owner is on the same network.">
+            <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://your-tunnel.example.com" />
+          </Field>
+          <div className="mt-2">
+            <Button variant="primary" disabled={savingBaseUrl} onClick={() => void saveBaseUrl()}>{savingBaseUrl ? "Saving…" : "Save"}</Button>
           </div>
         </Card>
       )}

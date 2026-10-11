@@ -87,6 +87,43 @@ export function whatsAppShareUrl(phone: string, text: string): string {
   return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
 }
 
+/** The message body sent when sharing a vehicle's authorization code over WhatsApp:
+ *  plain text (wa.me URL-encodes it), the code kept prominent on its own line so it
+ *  is easy to spot and copy, with a short "what do I do with this" line for the person
+ *  who receives it (the owner, who forwards it to drivers they trust). */
+export function accessCodeMessage(plate: string, code: string, community?: string): string {
+  const who = community?.trim() ? community.trim() : "Guard++";
+  return [
+    `Your ${who} access code for ${plate}:`,
+    "",
+    code,
+    "",
+    "Give this code only to the drivers you authorize — each driver redeems it once, in Guard++, to unlock this vehicle.",
+  ].join("\n");
+}
+
+/** The message sent to a vehicle's owner asking them to approve a new driver remotely:
+ *  the link opens a one-tap Approve/Deny page (see confirmPage in the server), good for
+ *  as long as the request hasn't expired. */
+export function authorizationRequestMessage(plate: string, driverName: string, link: string, community?: string): string {
+  const who = community?.trim() ? community.trim() : "Guard++";
+  return [
+    `${who}: a request to authorize ${driverName} to drive ${plate} needs your approval.`,
+    "",
+    link,
+    "",
+    "Tap the link, then Approve or Deny. This link is single-use and expires after a few days.",
+  ].join("\n");
+}
+
+export const AUTHZ_STATUS: Record<string, { label: string; tone: Tone }> = {
+  pending: { label: "Pending", tone: "info" },
+  approved: { label: "Approved", tone: "ok" },
+  denied: { label: "Denied", tone: "bad" },
+  cancelled: { label: "Cancelled", tone: "muted" },
+  expired: { label: "Expired", tone: "warn" },
+};
+
 /** The Clipboard API needs a secure context (HTTPS or localhost); this app is typically
  *  served over plain HTTP on the LAN, where navigator.clipboard is undefined. Falls back
  *  to the classic textarea-select-execCommand trick, which works on plain HTTP too. */

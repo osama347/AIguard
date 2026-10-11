@@ -50,11 +50,13 @@ int main(int argc, char** argv) {
         UserRepository userRepo(db);
         CameraRepository cameraRepo(db);
         CommunityRepository communityRepo(db);
+        SettingsRepository settingsRepo(db);
+        AuthorizationRepository authzRepo(db);
         StatsRepository statsRepo(db);
 
         InferenceClient inference(cfg.inference.url, cfg.inference.secret);
         EventBus bus;
-        FleetService fleet(fleetRepo, eventRepo, inference, cfg.policy.matchThreshold);
+        FleetService fleet(fleetRepo, eventRepo, authzRepo, cfg, inference, cfg.policy.matchThreshold);
         AuthService auth(userRepo, eventRepo, cfg.auth.sessionHours);
         JobService jobs(jobRepo, fleet, eventRepo, inference, bus, cfg);
         CameraService cameras(cameraRepo, fleet, eventRepo, inference, bus, cfg);
@@ -64,7 +66,7 @@ int main(int argc, char** argv) {
         svr.set_payload_max_length((cfg.server.maxUploadMb + 1) << 20);
         svr.set_read_timeout(300, 0);
         svr.set_write_timeout(300, 0);
-        registerApi(svr, ApiDeps{cfg, auth, fleet, jobs, cameras, communityRepo, eventRepo, statsRepo, inference, bus});
+        registerApi(svr, ApiDeps{cfg, auth, fleet, jobs, cameras, communityRepo, settingsRepo, eventRepo, statsRepo, inference, bus});
 
         jobs.start();
         cameras.start();

@@ -1,12 +1,28 @@
 #include "app/fleet_service.h"
 #include "app/errors.h"
+#include "common/log.h"
 #include "domain/plate.h"
 #include "infra/crypto.h"
 #include <cctype>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+
+namespace fs = std::filesystem;
 
 namespace guard {
 
 namespace {
+
+// "YYYY-MM-DD HH:MM:SS" in UTC — the same shape SQLite's datetime() produces, so
+// the two compare correctly as plain strings.
+std::string utcStamp(std::time_t t) {
+    std::tm tm{};
+    gmtime_r(&t, &tm);
+    char buf[20];
+    std::strftime(buf, sizeof buf, "%Y-%m-%d %H:%M:%S", &tm);
+    return buf;
+}
 
 // Identifies how enrolled embeddings were produced (model, 512-d, input standardization
 // (x-127.5)/128, 15% crop margin; measured in tools/face_eval.py). Templates carrying any
@@ -87,9 +103,10 @@ bool isPlateCollision(const DbConstraintError& e) {
 
 } // namespace
 
-FleetService::FleetService(FleetRepository& fleet, EventRepository& events, InferenceClient& inference,
-                           float matchThreshold)
-    : fleet_(fleet), events_(events), inference_(inference), matchThreshold_(matchThreshold) {}
+FleetService::FleetService(FleetRepository& fleet, EventRepository& events, AuthorizationRepository& authz,
+                           const CoreConfig& cfg, InferenceClient& inference, float matchThreshold)
+    : fleet_(fleet), events_(events), authz_(authz), cfg_(cfg), inference_(inference),
+      matchThreshold_(matchThreshold) {}
 
 // ---------------------------------------------------------------- drivers
 
@@ -287,6 +304,155 @@ Driver FleetService::authorizeDriverForVehicle(int64_t vehicleId, Driver d, cons
     invalidate();
     events_.audit(actor, "authorize", "driver", std::to_string(id), d.name + " for vehicle " + std::to_string(vehicleId));
     return getDriver(id);
+}
+
+// ------------------------------------------------ owner-approved requests
+
+std::string FleetService::pendingDir(const std::string& name) const {
+    return cfg_.mediaDir() + "/pending/" + name;
+}
+
+void FleetService::removeStagedPhotos(const std::string& dir) {
+    if (dir.empty()) return;
+    std::error_code ec;
+    fs::remove_all(pendingDir(dir), ec);   // best effort
+}
+
+FleetService::AuthorizationCreated FleetService::createAuthorization(
+    int64_t vehicleId, Driver driver, const std::vector<std::pair<std::string, std::string>>& photos,
+    int expiresHours, const std::string& actor) {
+    const Vehicle v = getVehicle(vehicleId);   // 404 if missing
+    if (!v.owner) throw ValidationError("this vehicle has no owner to approve a driver");
+    validateDriver(driver);
+    driver.isOwner = false;
+    if (photos.size() > 20) throw ValidationError("at most 20 photos per request");
+
+    const std::string token = crypto::randomHex(16);   // 128 bits; goes in the link, never stored raw
+    DriverAuthorization a;
+    a.vehicleId = vehicleId;
+    a.driverName = driver.name;
+    a.driverPhone = trimmed(driver.phone);
+    a.tokenHash = crypto::sha256Hex(token);
+    a.requestedBy = actor;
+    a.expiresAt = utcStamp(std::time(nullptr) + static_cast<std::time_t>(expiresHours) * 3600);
+    const int64_t id = authz_.create(a);
+
+    // Stage face photos under <data>/media/pending/<token hash> so the owner's approval
+    // can enrol them without the admin present. The directory name is the token hash;
+    // the raw token never touches disk.
+    if (!photos.empty()) {
+        const std::string dir = token.substr(0, 16) + crypto::randomHex(8);
+        std::error_code ec;
+        fs::create_directories(pendingDir(dir), ec);
+        for (std::size_t i = 0; i < photos.size(); ++i) {
+            std::ofstream out(pendingDir(dir) + "/" + std::to_string(i) + ".img", std::ios::binary | std::ios::trunc);
+            if (!out) continue;
+            out.write(photos[i].second.data(), static_cast<std::streamsize>(photos[i].second.size()));
+        }
+        authz_.setPhotoDir(id, dir);
+    }
+
+    events_.audit(actor, "request_authorization", "vehicle", std::to_string(vehicleId),
+                  a.driverName + " (awaiting owner)");
+
+    AuthorizationCreated out;
+    out.authorization = *authz_.get(id);
+    out.token = token;
+    return out;
+}
+
+std::vector<DriverAuthorization> FleetService::listAuthorizations(int64_t vehicleId, bool pendingOnly) {
+    auto rows = authz_.list(vehicleId, pendingOnly);
+    const std::string now = utcStamp(std::time(nullptr));
+    for (auto& a : rows)   // surface expiry without a background job
+        if (a.status == "pending" && a.expiresAt < now) { authz_.decide(a.id, "expired"); a.status = "expired"; }
+    return rows;
+}
+
+std::optional<DriverAuthorization> FleetService::authorization(int64_t id) {
+    auto a = authz_.get(id);
+    if (a && a->status == "pending" && a->expiresAt < utcStamp(std::time(nullptr))) {
+        authz_.decide(a->id, "expired");
+        a->status = "expired";
+    }
+    return a;
+}
+
+std::optional<DriverAuthorization> FleetService::authorizationByToken(const std::string& token) {
+    if (token.empty()) return std::nullopt;
+    auto a = authz_.byTokenHash(crypto::sha256Hex(token));
+    if (a && a->status == "pending" && a->expiresAt < utcStamp(std::time(nullptr))) {
+        authz_.decide(a->id, "expired");
+        a->status = "expired";
+    }
+    return a;
+}
+
+void FleetService::cancelAuthorization(int64_t id, const std::string& actor) {
+    auto a = authorization(id);   // 404 if missing, marks expiry
+    if (!a) throw NotFoundError("authorization request " + std::to_string(id) + " not found");
+    if (a->status != "pending") throw ConflictError("this request is already " + a->status);
+    authz_.decide(id, "cancelled");
+    removeStagedPhotos(a->photoDir);
+    events_.audit(actor, "cancel_authorization", "vehicle", std::to_string(a->vehicleId), a->driverName);
+}
+
+FleetService::AuthorizationResult FleetService::decideAuthorization(
+    const std::string& token, bool approve, const std::string& actor) {
+    auto a = authorizationByToken(token);
+    if (!a) throw NotFoundError("this link is not valid");
+    if (a->status == "expired") throw ConflictError("this link has expired");
+    if (a->status != "pending") throw ConflictError("this request was already " + a->status);
+
+    AuthorizationResult out;
+    if (!approve) {
+        if (!authz_.decide(a->id, "denied")) throw ConflictError("this request was already decided");
+        removeStagedPhotos(a->photoDir);
+        events_.audit(actor, "deny_authorization", "vehicle", std::to_string(a->vehicleId), a->driverName);
+        out.status = "denied";
+        return out;
+    }
+
+    // Create the driver first; if another decision won the race, undo and bail.
+    Driver d;
+    d.name = a->driverName;
+    d.phone = a->driverPhone;
+    d.isOwner = false;
+    validateDriver(d);
+    const int64_t driverId = fleet_.createDriver(d);
+    fleet_.assign(driverId, a->vehicleId);
+
+    // Enrol the staged photos (best effort — the AI engine may be down right now).
+    if (!a->photoDir.empty()) {
+        std::vector<std::pair<std::string, std::string>> photos;
+        std::error_code ec;
+        for (const auto& e : fs::directory_iterator(pendingDir(a->photoDir), ec)) {
+            std::ifstream in(e.path(), std::ios::binary);
+            if (!in) continue;
+            std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            photos.emplace_back(e.path().filename().string(), std::move(bytes));
+        }
+        if (!photos.empty()) {
+            try {
+                out.photos = enrollPhotos(driverId, photos, actor);
+            } catch (const std::exception& e) {
+                out.photosPending = true;
+                LOG(Warn) << "could not enrol staged photos for driver " << driverId << ": " << e.what();
+            }
+        }
+        removeStagedPhotos(a->photoDir);
+    }
+
+    if (!authz_.decide(a->id, "approved", driverId)) {   // lost the race: undo
+        fleet_.deleteDriver(driverId);
+        throw ConflictError("this request was already decided");
+    }
+    invalidate();
+    events_.audit(actor, "approve_authorization", "driver", std::to_string(driverId),
+                  d.name + " for vehicle " + std::to_string(a->vehicleId) + " (owner-approved)");
+    out.status = "approved";
+    out.driver = getDriver(driverId);
+    return out;
 }
 
 // ---------------------------------------------------------------- matching

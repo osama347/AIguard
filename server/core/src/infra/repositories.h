@@ -57,6 +57,38 @@ private:
     Db& db_;
 };
 
+// Owner-approved driver authorizations (schema v7). The raw token is never
+// stored here — only its hash; lookup is by hash.
+class AuthorizationRepository {
+public:
+    explicit AuthorizationRepository(Db& db) : db_(db) {}
+
+    int64_t create(const DriverAuthorization& a); // a.tokenHash + a.vehicleId + a.driverName + a.driverPhone + a.requestedBy + a.expiresAt
+    std::optional<DriverAuthorization> get(int64_t id);
+    std::optional<DriverAuthorization> byTokenHash(const std::string& tokenHash);
+    // Newest first; vehicleId = 0 lists them all, pendingOnly filters to pending.
+    std::vector<DriverAuthorization> list(int64_t vehicleId = 0, bool pendingOnly = false);
+    void setPhotoDir(int64_t id, const std::string& dir);
+    // Moves a pending row to its final state (approved/denied/cancelled/expired).
+    // Returns false if it wasn't pending anymore (someone else decided first).
+    bool decide(int64_t id, const std::string& status, int64_t authorizedDriverId = 0);
+
+private:
+    Db& db_;
+};
+
+// Key/value runtime settings (public base URL, authorization validity, ...).
+class SettingsRepository {
+public:
+    explicit SettingsRepository(Db& db) : db_(db) {}
+
+    std::string get(const std::string& key, const std::string& def = "");
+    void set(const std::string& key, const std::string& value);
+
+private:
+    Db& db_;
+};
+
 class JobRepository {
 public:
     explicit JobRepository(Db& db) : db_(db) {}

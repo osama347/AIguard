@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { api, fetchProtectedImage, type Driver, type EnrollResult, type Status, type Vehicle } from "../api/client";
 import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session";
-import { STATUS_TONE, copyToClipboard, isValidPhone, whatsAppShareUrl } from "../lib/format";
+import { AUTHZ_STATUS, STATUS_TONE, accessCodeMessage, authorizationRequestMessage, copyToClipboard, isValidPhone, whatsAppShareUrl } from "../lib/format";
 import { cn } from "../lib/cn";
 import { Badge, Button, Card, Chip, Empty, ErrorBox, Fact, Facts, Field, FormSection, Modal, Notice, PageHeader, Select, Spinner } from "../components/ui";
 
@@ -533,11 +533,12 @@ function SetOwnerModal({ vehicle, onClose, onSaved }: { vehicle: Vehicle; onClos
   );
 }
 
-type WizardStep = "vehicle" | "owner" | "drivers";
+type WizardStep = "vehicle" | "owner" | "photos" | "drivers";
 
 const WIZARD_STEPS: { key: WizardStep; label: string }[] = [
   { key: "vehicle", label: "Vehicle" },
   { key: "owner", label: "Owner" },
+  { key: "photos", label: "Photos" },
   { key: "drivers", label: "Drivers" },
 ];
 
@@ -555,6 +556,9 @@ export function RegisterVehicleWizard({ initialPlate, onClose, onDone }: {
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<Vehicle | null>(null);
   const [addedDrivers, setAddedDrivers] = useState<Driver[]>([]);
+  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
+  const [enrolled, setEnrolled] = useState<EnrollResult | null>(null);
+  const [busyPhotos, setBusyPhotos] = useState(false);
   const setV = (k: keyof typeof vehicleForm) => (e: { target: { value: string } }) => setVehicleForm({ ...vehicleForm, [k]: e.target.value });
 
   const stepIndex = WIZARD_STEPS.findIndex((s) => s.key === step);
@@ -573,7 +577,7 @@ export function RegisterVehicleWizard({ initialPlate, onClose, onDone }: {
       const vehicle = await api.createVehicle({ ...vehicleForm, owner });
       setCreated(vehicle);
       pushNotice(`${vehicle.plate_number} registered`);
-      setStep("drivers");
+      setStep("photos");
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -581,11 +585,26 @@ export function RegisterVehicleWizard({ initialPlate, onClose, onDone }: {
     }
   };
 
+  const enrollOwnerPhotos = async () => {
+    if (!created?.owner || !photoFiles.length) return;
+    setBusyPhotos(true);
+    setError(null);
+    try {
+      const r = await api.enrollPhotos(created.owner.id, photoFiles);
+      setEnrolled(r);
+      setPhotoFiles([]);
+      pushNotice(`${r.enrolled} owner photo${r.enrolled === 1 ? "" : "s"} enrolled`);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusyPhotos(false);
+    }
+  };
+
   const goTo = (i: number) => {
     // Only allow stepping back while still on the pre-registration steps, and never
     // past the created vehicle (owner data is kept so going back doesn't lose it).
-    if (i < 0 || i > stepIndex) return;
-    if (step === "drivers") return;
+    if (created || i < 0 || i > stepIndex) return;
     setStep(WIZARD_STEPS[i].key as WizardStep);
   };
 
@@ -642,12 +661,37 @@ export function RegisterVehicleWizard({ initialPlate, onClose, onDone }: {
           </div>
         )}
 
-        {step === "drivers" && created && (
+        {step === "photos" && created && (
           <div className="flex flex-col gap-5">
             <Notice tone="ok">
               <strong>{created.plate_number} registered.</strong> Owner: {created.owner?.name}.
             </Notice>
 
+            <FormSection
+              title="Owner face photos"
+              hint={`So ${created.owner?.name ?? "the owner"} can unlock the gate by face. Front-facing, well lit, one person per photo. Adds first, then enrols — photos aren't submitted until you press Enrol. You can add more later from their profile.`}>
+              <input type="file" accept="image/*" multiple onChange={(e) => setPhotoFiles(Array.from(e.target.files ?? []))} />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="primary" type="button" disabled={busyPhotos || !photoFiles.length} onClick={() => void enrollOwnerPhotos()}>
+                  {busyPhotos ? <Spinner /> : <>Enrol {photoFiles.length || ""} photo{photoFiles.length === 1 ? "" : "s"}</>}
+                </Button>
+                {photoFiles.length > 0 && (
+                  <button type="button" className="text-[13px] text-muted hover:underline" onClick={() => setPhotoFiles([])}>Clear selection</button>
+                )}
+              </div>
+              <EnrollSummary result={enrolled} />
+            </FormSection>
+
+            <Divider />
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="flex-1 text-[13px] text-muted">Photos are optional — skip for now and add them later.</span>
+              <Button variant="primary" onClick={() => setStep("drivers")}>Next: Drivers</Button>
+            </div>
+          </div>
+        )}
+
+        {step === "drivers" && created && (
+          <div className="flex flex-col gap-5">
             {created.auth_code && (
               <FormSection title="Authorization code" hint="Share this with anyone the owner authorizes to drive — an admin can add them later with it, without the owner present.">
                 <div className="flex flex-wrap items-end gap-2">
@@ -655,7 +699,7 @@ export function RegisterVehicleWizard({ initialPlate, onClose, onDone }: {
                   <CopyCodeButton value={created.auth_code} />
                   {created.owner?.phone && (
                     <a className="inline-flex h-9 items-center rounded-md border border-line-strong bg-surface px-3.5 text-sm font-medium hover:bg-surface-2 hover:no-underline" target="_blank" rel="noreferrer"
-                       href={whatsAppShareUrl(created.owner.phone, `Guard++ authorization code for ${created.plate_number}: ${created.auth_code}`)}>
+                       href={whatsAppShareUrl(created.owner.phone, accessCodeMessage(created.plate_number, created.auth_code))}>
                       Share via WhatsApp
                     </a>
                   )}
@@ -807,6 +851,100 @@ export function FleetPage() {
   );
 }
 
+/** Lets an admin ask the vehicle's owner to approve a new driver remotely: the owner
+ *  gets a one-tap Approve/Deny link (shared over WhatsApp) instead of handing out the
+ *  reusable authorization code. The raw link is only ever shown once, right after the
+ *  request is created — it isn't retrievable afterward, only cancellable. */
+function AuthorizationRequests({ vehicle, owner }: { vehicle: Vehicle; owner: Vehicle["owner"] }) {
+  const { pushNotice } = useSession();
+  const list = useAsync(() => api.authorizations({ vehicle_id: vehicle.id }), [vehicle.id]);
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [photos, setPhotos] = useState<File[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [justCreated, setJustCreated] = useState<{ link: string; driverName: string } | null>(null);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append("vehicle_id", String(vehicle.id));
+      fd.append("driver_name", name);
+      fd.append("driver_phone", phone);
+      photos.forEach((f) => fd.append("photos", f, f.name));
+      const r = await api.createAuthorization(fd);
+      setJustCreated({ link: r.link, driverName: r.authorization.driver_name });
+      setName(""); setPhone(""); setPhotos([]);
+      pushNotice("Request sent — share the link with the owner");
+      list.reload();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancel = async (id: number) => {
+    setError(null);
+    try {
+      await api.cancelAuthorization(id);
+      list.reload();
+      pushNotice("Request cancelled");
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  return (
+    <FormSection title="Request owner approval" hint="Ask the owner to approve a new driver remotely instead of using the authorization code — they get a one-tap Approve/Deny link. Not needed if the owner is present (use the code above instead).">
+      <ErrorBox error={error} />
+      <form onSubmit={submit} className="flex flex-col gap-3">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Driver's full name"><input value={name} onChange={(e) => setName(e.target.value)} required maxLength={120} /></Field>
+          <Field label="Driver's phone (optional)"><input value={phone} onChange={(e) => setPhone(e.target.value)} maxLength={40} /></Field>
+        </div>
+        <Field label="Face photos (optional)" hint="Staged until the owner approves, then enrolled automatically.">
+          <input type="file" accept="image/*" multiple onChange={(e) => setPhotos(Array.from(e.target.files ?? []))} />
+        </Field>
+        <div className="flex items-center"><span className="flex-1" /><Button variant="primary" disabled={busy || !name.trim()}>{busy ? <Spinner /> : "Send request"}</Button></div>
+      </form>
+
+      {justCreated && (
+        <Notice tone="ok">
+          <strong>Request sent for {justCreated.driverName}.</strong> Share this link with the owner — it's only shown once.
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <input value={justCreated.link} readOnly className="min-w-0 flex-1 font-mono text-[12px]" />
+            <CopyCodeButton value={justCreated.link} />
+            {owner?.phone && (
+              <a className="inline-flex h-9 items-center rounded-md border border-line-strong bg-surface px-3.5 text-sm font-medium hover:bg-surface-2 hover:no-underline" target="_blank" rel="noreferrer"
+                 href={whatsAppShareUrl(owner.phone, authorizationRequestMessage(vehicle.plate_number, justCreated.driverName, justCreated.link))}>
+                Share via WhatsApp
+              </a>
+            )}
+          </div>
+        </Notice>
+      )}
+
+      {!!list.data?.length && (
+        <ul className="m-0 list-none p-0">
+          {list.data.map((a) => (
+            <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-line py-2 last:border-b-0 text-[13px]">
+              <span><strong className="font-medium">{a.driver_name}</strong>{a.driver_phone && <span className="ml-1.5 font-mono text-muted">{a.driver_phone}</span>}</span>
+              <span className="flex items-center gap-2">
+                <Badge tone={AUTHZ_STATUS[a.status]?.tone ?? "muted"}>{AUTHZ_STATUS[a.status]?.label ?? a.status}</Badge>
+                {a.status === "pending" && <Button size="sm" type="button" onClick={() => void cancel(a.id)}>Cancel</Button>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </FormSection>
+  );
+}
+
 function VehicleEditor({ vehicle, readOnly, onClose, onSaved, onPickDriver }: {
   vehicle: Vehicle; readOnly: boolean; onClose: () => void; onSaved: () => void; onPickDriver: (id: number) => void;
 }) {
@@ -917,9 +1055,9 @@ function VehicleEditor({ vehicle, readOnly, onClose, onSaved, onPickDriver }: {
             <div className="flex flex-wrap items-end gap-2">
               <input value={vehicle.auth_code} readOnly className="flex-1 font-mono" />
               {!readOnly && <CopyCodeButton value={vehicle.auth_code} />}
-              {owner?.phone && (
+              {owner?.phone && vehicle.auth_code && (
                 <a className="inline-flex h-9 items-center rounded-md border border-line-strong bg-surface px-3.5 text-sm font-medium hover:bg-surface-2 hover:no-underline" target="_blank" rel="noreferrer"
-                   href={whatsAppShareUrl(owner.phone, `Guard++ authorization code for ${vehicle.plate_number}: ${vehicle.auth_code}`)}>
+                   href={whatsAppShareUrl(owner.phone, accessCodeMessage(vehicle.plate_number, vehicle.auth_code))}>
                   Share via WhatsApp
                 </a>
               )}
@@ -928,6 +1066,13 @@ function VehicleEditor({ vehicle, readOnly, onClose, onSaved, onPickDriver }: {
           {!readOnly && !owner && !settingOwner && <Button type="button" disabled={busy} onClick={() => setSettingOwner(true)}>Set owner</Button>}
           {!readOnly && settingOwner && <OwnerStep onBack={() => setSettingOwner(false)} onNext={setOwnerNow} submitLabel="Set owner" />}
         </FormSection>
+
+        {!readOnly && owner && (
+          <>
+            <Divider />
+            <AuthorizationRequests vehicle={vehicle} owner={owner} />
+          </>
+        )}
 
         <Divider />
 

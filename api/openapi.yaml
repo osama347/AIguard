@@ -475,6 +475,110 @@ paths:
           description: text/event-stream of Event envelopes
           content: { text/event-stream: { schema: { $ref: "#/components/schemas/Event" } } }
 
+  /settings:
+    get:
+      summary: Get application settings (admin)
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/Settings" } } }
+        "403": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Update application settings (admin)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SettingsInput" } } }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/Settings" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /authorizations:
+    get:
+      summary: List driver authorizations (admin)
+      parameters:
+        - name: vehicle_id
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: pending
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/AuthorizationList" } } }
+        "403": { $ref: "#/components/responses/Error" }
+    post:
+      summary: Request owner approval to authorize a new driver (admin). Returns link/token info.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [vehicle_id, driver_name, driver_phone]
+              properties:
+                vehicle_id: { type: integer, format: int64 }
+                driver_name: { type: string, maxLength: 120 }
+                driver_phone: { type: string }
+                driver_notes: { type: string }
+                expires_hours: { type: integer, default: 48, minimum: 1, maximum: 168 }
+                photos:
+                  type: array
+                  items: { type: string, format: binary }
+      responses:
+        "201":
+          description: Created
+          content: { application/json: { schema: { $ref: "#/components/schemas/AuthorizationCreated" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /authorizations/{id}/cancel:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Cancel a pending authorization request (admin)
+      responses:
+        "204": { description: Cancelled }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /confirm/{token}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Public confirmation page for an owner to approve/deny a driver authorization
+      responses:
+        "200":
+          description: HTML page
+          content: { text/html: { schema: { type: string } } }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /authorizations/respond:
+    post:
+      summary: Public endpoint for the owner to approve or deny (via the confirmation page)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, approve]
+              properties:
+                token: { type: string }
+                approve: { type: boolean }
+      responses:
+        "200":
+          description: Decision applied
+          content: { application/json: { schema: { $ref: "#/components/schemas/AuthorizationDecision" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+
 components:
   securitySchemes:
     bearer: { type: http, scheme: bearer }
@@ -1110,3 +1214,68 @@ components:
           enum: [job.queued, job.started, job.frame, job.completed, job.failed, job.cancelled,
                  camera.frame, camera.status, access.event, alert.created, alert.updated]
         data: { type: object, additionalProperties: true }
+
+    DriverAuthorization:
+      type: object
+      required: [id, vehicle_id, vehicle_plate, driver_name, driver_phone, status, requested_by, authorized_driver_id, created_at, expires_at, decided_at, owner_name, owner_phone]
+      properties:
+        id: { type: integer, format: int64 }
+        vehicle_id: { type: integer, format: int64 }
+        vehicle_plate: { type: string }
+        driver_name: { type: string }
+        driver_phone: { type: string }
+        status: { type: string, enum: [pending, approved, denied, cancelled, expired] }
+        requested_by: { type: string }
+        authorized_driver_id: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        decided_at: { type: string, format: date-time, nullable: true }
+        owner_name: { type: string }
+        owner_phone: { type: string }
+
+    AuthorizationCreated:
+      type: object
+      required: [authorization, token, link]
+      properties:
+        authorization: { $ref: "#/components/schemas/DriverAuthorization" }
+        token: { type: string }
+        link: { type: string }
+
+    EnrollPhoto:
+      type: object
+      required: [filename, enrolled, error]
+      properties:
+        filename: { type: string }
+        enrolled: { type: boolean }
+        error: { type: string, nullable: true }
+
+    AuthorizationDecision:
+      type: object
+      required: [status, driver, photos, photos_pending]
+      properties:
+        status: { type: string, enum: [approved, denied] }
+        driver: { $ref: "#/components/schemas/Driver", nullable: true }
+        photos:
+          type: array
+          items: { $ref: "#/components/schemas/EnrollPhoto" }
+        photos_pending: { type: boolean }
+
+    AuthorizationList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/DriverAuthorization" } }
+
+    Settings:
+      type: object
+      required: [public_base_url]
+      properties:
+        public_base_url: { type: string, nullable: true }
+
+    SettingsInput:
+      type: object
+      properties:
+        public_base_url: { type: string, nullable: true }
+
+
+
