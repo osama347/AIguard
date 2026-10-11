@@ -3,7 +3,7 @@ import { api, subscribe, type Camera, type ProbeResult } from "../api/client";
 import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session";
 import { CAMERA_STATE, formatRelative } from "../lib/format";
-import { Badge, Empty, ErrorBox, Field, Modal, PageHeader, Spinner } from "../components/ui";
+import { Badge, Button, Card, Empty, ErrorBox, Field, Modal, Notice, PageHeader, Spinner } from "../components/ui";
 
 // ------------------------------------------------------------------ source types
 
@@ -82,49 +82,51 @@ export function CamerasPage() {
       <PageHeader
         title="Cameras"
         subtitle="Every enabled camera is analysed continuously; each vehicle or person passing becomes an access event."
-        actions={admin && <button className="btn btn-primary" onClick={() => setEditing("new")}>Add camera</button>}
+        actions={admin && <Button variant="primary" onClick={() => setEditing("new")}>Add camera</Button>}
       />
       <ErrorBox error={error} onRetry={reload} />
-      {loading && !cameras ? <Spinner /> : !cameras?.length ? (
+      {loading && !cameras ? <div className="grid place-items-center py-16"><Spinner /></div> : !cameras?.length ? (
         <Empty title="No cameras">{admin ? "Add the first camera to start live monitoring." : "An administrator needs to add cameras."}</Empty>
       ) : (
-        <div className="card card-flush table-wrap">
-          <table>
-            <thead><tr><th>Name</th><th>Source</th><th>Status</th><th>Analysis</th><th>Last frame</th>{admin && <th />}</tr></thead>
-            <tbody>
-              {cameras.map((c) => {
-                const st = CAMERA_STATE[c.status.state] ?? { label: c.status.state, tone: "muted" as const };
-                return (
-                  <tr key={c.id}>
-                    <td><strong>{c.name}</strong></td>
-                    <td className="break small">{describeSource(c.source)}</td>
-                    <td>
-                      <div className="stack-tight">
-                        <Badge tone={st.tone}>{st.label}</Badge>
-                        {c.status.state !== "live" && c.status.message && <span className="muted small break">{c.status.message}</span>}
-                      </div>
-                    </td>
-                    <td className="nowrap small">
-                      {c.status.state === "live"
-                        ? <>{c.status.analysis_fps.toFixed(1)} / {c.sample_fps} fps<br /><span className="muted">{c.status.width}×{c.status.height}</span></>
-                        : <span className="muted">{c.sample_fps} fps target</span>}
-                    </td>
-                    <td className="nowrap small">{formatRelative(c.status.last_frame_at)}</td>
-                    {admin && (
-                      <td className="nowrap">
-                        <div className="row">
-                          <button className="btn btn-small" onClick={() => toggle(c)}>{c.enabled ? "Disable" : "Enable"}</button>
-                          <button className="btn btn-small" onClick={() => setEditing(c)}>Edit</button>
-                          <button className="btn btn-small btn-danger" onClick={() => remove(c)}>Remove</button>
+        <Card flush>
+          <div className="overflow-x-auto">
+            <table>
+              <thead><tr><th>Name</th><th>Source</th><th>Status</th><th>Analysis</th><th>Last frame</th>{admin && <th />}</tr></thead>
+              <tbody>
+                {cameras.map((c) => {
+                  const st = CAMERA_STATE[c.status.state] ?? { label: c.status.state, tone: "muted" as const };
+                  return (
+                    <tr key={c.id}>
+                      <td><strong className="font-medium">{c.name}</strong></td>
+                      <td className="break-words text-[12px] text-muted">{describeSource(c.source)}</td>
+                      <td>
+                        <div className="flex flex-col gap-1">
+                          <Badge tone={st.tone}>{st.label}</Badge>
+                          {c.status.state !== "live" && c.status.message && <span className="break-words text-[12px] text-muted">{c.status.message}</span>}
                         </div>
                       </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                      <td className="whitespace-nowrap text-[12px]">
+                        {c.status.state === "live"
+                          ? <>{c.status.analysis_fps.toFixed(1)} / {c.sample_fps} fps<br /><span className="text-muted">{c.status.width}×{c.status.height}</span></>
+                          : <span className="text-muted">{c.sample_fps} fps target</span>}
+                      </td>
+                      <td className="whitespace-nowrap text-[12px] text-muted">{formatRelative(c.status.last_frame_at)}</td>
+                      {admin && (
+                        <td className="whitespace-nowrap">
+                          <div className="flex justify-end gap-2">
+                            <Button size="sm" onClick={() => toggle(c)}>{c.enabled ? "Disable" : "Enable"}</Button>
+                            <Button size="sm" onClick={() => setEditing(c)}>Edit</Button>
+                            <Button size="sm" variant="danger" onClick={() => remove(c)}>Remove</Button>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       )}
       {editing && (
         <CameraForm camera={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); }} />
@@ -178,16 +180,16 @@ function CameraForm({ camera, onClose, onSaved }: { camera: Camera | null; onClo
       onClose={onClose}
       footer={
         <>
-          <button className="btn" onClick={test} disabled={probing || !value.trim()}>{probing ? "Testing…" : "Test connection"}</button>
-          <span className="spacer" />
-          <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={save} disabled={saving || !name.trim() || !value.trim()}>
+          <Button onClick={test} disabled={probing || !value.trim()}>{probing ? "Testing…" : "Test connection"}</Button>
+          <span className="flex-1" />
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" onClick={save} disabled={saving || !name.trim() || !value.trim()}>
             {saving ? "Saving…" : "Save"}
-          </button>
+          </Button>
         </>
       }
     >
-      <div className="stack">
+      <div className="flex flex-col gap-4">
         <Field label="Name" hint="Shown in the access log and alerts, e.g. “Main gate – entry”.">
           <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} autoFocus />
         </Field>
@@ -197,23 +199,23 @@ function CameraForm({ camera, onClose, onSaved }: { camera: Camera | null; onClo
           </select>
         </Field>
         <Field label={k.field} hint={k.hint}>
-          <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={k.placeholder} className={kind === "gst" ? "mono" : undefined} />
+          <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={k.placeholder} className={kind === "gst" ? "font-mono" : undefined} />
         </Field>
         {(kind === "csi" || kind === "usb") && (
           <Field label="Resolution (optional)" hint={kind === "csi" ? "Default 1920x1080 at 30 fps." : "Default: the camera's own."}>
             <input value={resolution} onChange={(e) => setResolution(e.target.value)} placeholder="1280x720" />
           </Field>
         )}
-        <div className="row">
-          <Field label="Frames analysed per second" hint="5 is plenty for a gate. Lower it when running many cameras.">
-            <input type="number" min={0.5} max={15} step={0.5} value={fps} onChange={(e) => setFps(e.target.value)} />
-          </Field>
-        </div>
-        <label className="toggle"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled (analysed continuously)</label>
-        <div className="muted small">Source: <code className="break">{describeSource(source)}</code></div>
+        <Field label="Frames analysed per second" hint="5 is plenty for a gate. Lower it when running many cameras.">
+          <input type="number" min={0.5} max={15} step={0.5} value={fps} onChange={(e) => setFps(e.target.value)} />
+        </Field>
+        <label className="flex items-center gap-2 text-[13px]">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled (analysed continuously)
+        </label>
+        <div className="text-[12px] text-muted">Source: <code className="break-words">{describeSource(source)}</code></div>
         {probe && (probe.ok
-          ? <div className="notice notice-ok">Connected: {probe.width}×{probe.height}{probe.fps ? ` at ${Math.round(probe.fps)} fps` : ""} ({probe.backend}).</div>
-          : <div className="error-box">{probe.error}</div>)}
+          ? <Notice tone="ok">Connected: {probe.width}×{probe.height}{probe.fps ? ` at ${Math.round(probe.fps)} fps` : ""} ({probe.backend}).</Notice>
+          : <ErrorBox error={probe.error} />)}
         <ErrorBox error={error} />
       </div>
     </Modal>

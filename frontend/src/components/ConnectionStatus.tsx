@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useSession } from "../session";
 import { discoverServers, isDesktop, setServerUrl, type FoundServer } from "../api/client";
 import { formatBytes } from "../lib/format";
-import { Badge, Modal, Spinner } from "./ui";
+import { cn } from "../lib/cn";
+import { Badge, Button, Modal, Spinner, StatusDot } from "./ui";
 
 /** Label/tone for the topbar indicator, shared with the modal's status line. */
 function summarize(health: ReturnType<typeof useSession>["health"], healthError: Error | null) {
@@ -42,12 +43,12 @@ function ConnectionModal({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal title="Device connection" onClose={onClose} footer={
-      <button className="btn btn-primary" disabled={checking} onClick={checkNow}>{checking ? <Spinner /> : "Check now"}</button>
+      <Button variant="primary" disabled={checking} onClick={checkNow}>{checking ? <Spinner /> : "Check now"}</Button>
     }>
-      <div className="stack">
-        <div className="row" style={{ alignItems: "center", justifyContent: "space-between" }}>
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between">
           <Badge tone={tone}>{label}</Badge>
-          {checkedAt && <span className="muted small">Checked {checkedAt.toLocaleTimeString()}</span>}
+          {checkedAt && <span className="text-[12px] text-muted">Checked {checkedAt.toLocaleTimeString()}</span>}
         </div>
 
         {reachable && health && (
@@ -58,20 +59,20 @@ function ConnectionModal({ onClose }: { onClose: () => void }) {
         )}
 
         {!reachable && (
-          <div className="stack">
-            <p className="muted">{healthError?.message ?? "The Guard++ device is not responding."}</p>
+          <div className="flex flex-col gap-2">
+            <p className="text-[13px] text-muted">{healthError?.message ?? "The Guard++ device is not responding."}</p>
             {isDesktop ? (
-              <div className="stack">
-                <button className="btn" disabled={scanning} onClick={scan}>
+              <div className="flex flex-col gap-2">
+                <Button disabled={scanning} onClick={scan}>
                   {scanning ? <Spinner label="Searching this network…" /> : "Search for it on this network"}
-                </button>
-                {found && found.length === 0 && <p className="muted small">Nothing found. Ask an administrator to check the device.</p>}
+                </Button>
+                {found && found.length === 0 && <p className="text-[12px] text-muted">Nothing found. Ask an administrator to check the device.</p>}
                 {found?.map((d) => (
-                  <button key={d.url} className="btn btn-small" onClick={() => void reconnect(d.url)}>{d.name} — {d.url}</button>
+                  <Button key={d.url} size="sm" onClick={() => void reconnect(d.url)}>{d.name} — {d.url}</Button>
                 ))}
               </div>
             ) : (
-              <p className="muted small">Ask an administrator to check the Guard++ service on the device.</p>
+              <p className="text-[12px] text-muted">Ask an administrator to check the Guard++ service on the device.</p>
             )}
           </div>
         )}
@@ -80,8 +81,7 @@ function ConnectionModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** Topbar indicator, clickable by admins and guards alike: shows reachability at a glance and,
- *  on tap, lets either of them re-check or find the server on the LAN without knowing its address. */
+/** Topbar indicator: reachability at a glance; opens a panel to re-check or find the server on the LAN. */
 export function ConnectionStatus() {
   const { health, healthError } = useSession();
   const [open, setOpen] = useState(false);
@@ -89,8 +89,16 @@ export function ConnectionStatus() {
   const { tone, label } = summarize(health, healthError);
   return (
     <>
-      <button type="button" className="badge-btn" onClick={() => setOpen(true)} title="Check device connection">
-        <Badge tone={tone}>{label}</Badge>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title="Check device connection"
+        className={cn(
+          "flex items-center gap-2 rounded-md border border-transparent px-2.5 py-1.5 text-[12.5px] text-muted transition-colors hover:bg-surface-2 hover:text-text",
+        )}
+      >
+        <StatusDot tone={tone} />
+        <span className="hidden sm:inline">{label}</span>
       </button>
       {open && <ConnectionModal onClose={() => setOpen(false)} />}
     </>

@@ -1,24 +1,25 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api, discoverServers, isDesktop, serverUrl, setServerUrl, setToken, type FoundServer } from "../api/client";
 import { useSession } from "../session";
-import { Brand, ErrorBox, Field, Spinner } from "../components/ui";
+import { Brand, Button, ErrorBox, Field, Spinner } from "../components/ui";
 
-function AuthCard({ title, subtitle, wide, children }: { title: string; subtitle?: string; wide?: boolean; children: React.ReactNode }) {
+function AuthCard({ title, subtitle, wide, children }: { title: string; subtitle?: string; wide?: boolean; children: ReactNode }) {
   const { community } = useSession();
   return (
-    <div className="auth-screen">
-      <div className={`auth-card ${wide ? "setup-wide" : ""}`}>
-        <div className="brand brand-large">
-          <Brand community={community} size={34} />
+    <div className="grid min-h-full place-items-center bg-bg px-4 py-10">
+      <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_at_50%_-20%,color-mix(in_srgb,var(--accent)_8%,transparent),transparent_60%)]" />
+      <div className={`w-full rounded-2xl border border-line bg-surface p-7 shadow-[var(--shadow-pop)] ${wide ? "max-w-[540px]" : "max-w-[400px]"}`}>
+        <div className="mb-6 flex flex-col items-center gap-2 text-center">
+          <Brand community={community} size={32} />
+          {community?.configured && (community.helpline || community.address) && (
+            <p className="text-[12px] text-muted">
+              {[community.address, community.city].filter(Boolean).join(", ")}
+              {community.helpline && <> · Helpline {community.helpline}</>}
+            </p>
+          )}
         </div>
-        {community?.configured && (community.helpline || community.address) && (
-          <p className="muted small" style={{ textAlign: "center", margin: 0 }}>
-            {[community.address, community.city].filter(Boolean).join(", ")}
-            {community.helpline && <> · Helpline {community.helpline}</>}
-          </p>
-        )}
-        <h1>{title}</h1>
-        {subtitle && <p className="muted">{subtitle}</p>}
+        <h1 className="mb-1 text-center text-[19px] font-semibold tracking-tight">{title}</h1>
+        {subtitle && <p className="mb-5 text-center text-[13px] text-muted">{subtitle}</p>}
         {children}
       </div>
     </div>
@@ -53,27 +54,27 @@ export function ConnectPage() {
       subtitle={isDesktop && !configured ? "Choose the Jetson that runs the Guard++ server on your network." : "The Guard++ service is not responding."}>
       {configured && <ErrorBox error={healthError} />}
       {isDesktop ? (
-        <div className="stack">
-          <div className="stack">
-            <strong>Devices found on this network</strong>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <strong className="text-[13px] font-medium">Devices found on this network</strong>
             {scanning && <Spinner label="Searching…" />}
-            {!scanning && found && found.length === 0 && <p className="muted">None found. Enter the address below.</p>}
+            {!scanning && found && found.length === 0 && <p className="text-[13px] text-muted">None found. Enter the address below.</p>}
             {found?.map((d) => (
-              <button key={d.url} className="btn" disabled={busy} onClick={() => void connect(d.url)}>{d.name} — {d.url}</button>
+              <Button key={d.url} className="justify-start" disabled={busy} onClick={() => void connect(d.url)}>{d.name} — {d.url}</Button>
             ))}
-            {!scanning && <button type="button" className="btn btn-link" onClick={() => void scan()}>Search again</button>}
+            {!scanning && <button type="button" className="btn-link self-start text-[13px]" onClick={() => void scan()}>Search again</button>}
           </div>
-          <form onSubmit={submit} className="stack">
+          <form onSubmit={submit} className="flex flex-col gap-3">
             <Field label="Server address" hint="The Jetson's address and port, for example http://192.168.1.20:8090">
               <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://192.168.1.20:8090" required />
             </Field>
-            <button className="btn btn-primary" disabled={busy}>{busy ? <Spinner /> : "Connect"}</button>
+            <Button variant="primary" disabled={busy}>{busy ? <Spinner /> : "Connect"}</Button>
           </form>
         </div>
       ) : (
-        <div className="stack">
-          <p className="muted">Check that the <code>guard-core</code> service is running on the device.</p>
-          <button className="btn btn-primary" onClick={() => refreshHealth()}>Try again</button>
+        <div className="flex flex-col gap-3">
+          <p className="text-[13px] text-muted">Check that the <code>guard-core</code> service is running on the device.</p>
+          <Button variant="primary" onClick={() => refreshHealth()}>Try again</Button>
         </div>
       )}
     </AuthCard>
@@ -107,7 +108,7 @@ export function SetupPage() {
     setError(null);
     try {
       const r = await api.setup(username, password, { setup_code: needsCode ? code.trim() : undefined, community: c });
-      setToken(r.token);                       // the logo upload below needs the new admin's session
+      setToken(r.token);
       if (logo) {
         try { await api.uploadLogo(logo); } catch (err) { setError(`Account created, but the logo was not saved: ${(err as Error).message}`); }
       }
@@ -123,18 +124,18 @@ export function SetupPage() {
 
   return (
     <AuthCard wide title="Welcome to Guard++" subtitle="Set up this Guard++ server: your community and the administrator account.">
-      <form onSubmit={submit} className="stack">
+      <form onSubmit={submit} className="flex flex-col gap-4">
         <ErrorBox error={error} />
-        <div className="form-section">Your community</div>
+        <div className="text-[12px] font-semibold uppercase tracking-[0.06em] text-faint">Your community</div>
         <Field label="Community name" hint="For example: Bahria Town, or Pak-Austria Fachhochschule">
           <input value={c.name} onChange={set("name")} required maxLength={120} />
         </Field>
         <Field label="Address"><input value={c.address} onChange={set("address")} maxLength={300} /></Field>
-        <div className="row">
+        <div className="flex gap-3">
           <Field label="City"><input value={c.city} onChange={set("city")} maxLength={100} /></Field>
           <Field label="Country"><input value={c.country} onChange={set("country")} maxLength={100} /></Field>
         </div>
-        <div className="row">
+        <div className="flex gap-3">
           <Field label="Helpline"><input value={c.helpline} onChange={set("helpline")} inputMode="tel" maxLength={60} /></Field>
           <Field label="Email"><input type="email" value={c.email} onChange={set("email")} maxLength={120} /></Field>
         </div>
@@ -144,7 +145,7 @@ export function SetupPage() {
         </Field>
         {logo && <img className="logo-preview" src={URL.createObjectURL(logo)} alt="Logo preview" />}
 
-        <div className="form-section">Administrator account</div>
+        <div className="mt-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-faint">Administrator account</div>
         {needsCode && (
           <Field label="Setup code" hint="Shown when the server was installed. On the Jetson: sudo cat /etc/guard/guard.env">
             <input value={code} onChange={(e) => setCode(e.target.value)} autoComplete="off" required />
@@ -159,7 +160,7 @@ export function SetupPage() {
         <Field label="Confirm password">
           <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" required />
         </Field>
-        <button className="btn btn-primary" disabled={busy}>{busy ? <Spinner /> : "Finish setup"}</button>
+        <Button variant="primary" disabled={busy}>{busy ? <Spinner /> : "Finish setup"}</Button>
       </form>
     </AuthCard>
   );
@@ -188,7 +189,7 @@ export function LoginPage() {
 
   return (
     <AuthCard title="Sign in">
-      <form onSubmit={submit} className="stack">
+      <form onSubmit={submit} className="flex flex-col gap-4">
         <ErrorBox error={error} />
         <Field label="Username">
           <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus required />
@@ -196,9 +197,9 @@ export function LoginPage() {
         <Field label="Password">
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
         </Field>
-        <button className="btn btn-primary" disabled={busy}>{busy ? <Spinner /> : "Sign in"}</button>
+        <Button variant="primary" disabled={busy}>{busy ? <Spinner /> : "Sign in"}</Button>
         {isDesktop && (
-          <button type="button" className="btn btn-link" onClick={() => { setServerUrl(null); window.location.reload(); }}>
+          <button type="button" className="btn-link text-[13px]" onClick={() => { setServerUrl(null); window.location.reload(); }}>
             Server: {serverUrl()} — reset
           </button>
         )}

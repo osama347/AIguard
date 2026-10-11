@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
+import { ArrowsClockwise } from "@phosphor-icons/react";
 import { notificationsEnabled, requestNotifications } from "../lib/notify";
 import { api, assetUrl, checkForUpdate, isDesktop, serverUrl, setServerUrl, type CommunityInput } from "../api/client";
 import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session";
 import { formatBytes } from "../lib/format";
-import { Badge, ErrorBox, Field, PageHeader, Spinner } from "../components/ui";
+import { Badge, Button, Card, CardHead, ErrorBox, Fact, Facts, Field, PageHeader, Spinner } from "../components/ui";
 
 export function SettingsPage() {
   const { user, isAdmin, health, community, refreshCommunity, signOut } = useSession();
@@ -46,95 +47,97 @@ export function SettingsPage() {
       <PageHeader title="Settings" />
 
       {isDesktop && (
-        <div className="card">
-          <h2>Server</h2>
-          <form className="row" onSubmit={(e) => { e.preventDefault(); setServerUrl(url || null); window.location.reload(); }}>
+        <Card>
+          <CardHead title="Server" />
+          <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); setServerUrl(url || null); window.location.reload(); }}>
             <Field label="Guard++ server address" hint="The Jetson's address, for example http://192.168.1.20:8090">
               <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://192.168.1.20:8090" />
             </Field>
-            <button className="btn">Save & reconnect</button>
+            <Button>Save &amp; reconnect</Button>
           </form>
-          <div className="row" style={{ marginTop: 12, alignItems: "center" }}>
-            <button className="btn" disabled={checkingUpdate} onClick={runUpdateCheck}>
-              {checkingUpdate ? "Checking…" : "Check for updates"}
-            </button>
-            {updateMsg && <span className="muted small">{updateMsg}</span>}
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <Button disabled={checkingUpdate} onClick={runUpdateCheck}>
+              <ArrowsClockwise size={15} /> {checkingUpdate ? "Checking…" : "Check for updates"}
+            </Button>
+            {updateMsg && <span className="text-[12px] text-muted">{updateMsg}</span>}
           </div>
-        </div>
+        </Card>
       )}
 
       {isAdmin && (
-        <div className="card">
-          <h2>Community</h2>
-          <form className="stack" onSubmit={(e) => { e.preventDefault(); void saveCommunity(() => api.saveCommunity(form), "Saved."); }}>
+        <Card>
+          <CardHead title="Community" />
+          <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); void saveCommunity(() => api.saveCommunity(form), "Saved."); }}>
             <ErrorBox error={comErr} />
-            {comMsg && <p className="muted">{comMsg}</p>}
+            {comMsg && <p className="text-[13px] text-muted">{comMsg}</p>}
             <Field label="Community name"><input value={form.name ?? ""} onChange={setF("name")} required maxLength={120} /></Field>
             <Field label="Address"><input value={form.address ?? ""} onChange={setF("address")} maxLength={300} /></Field>
-            <div className="row">
+            <div className="grid gap-4 sm:grid-cols-2">
               <Field label="City"><input value={form.city ?? ""} onChange={setF("city")} maxLength={100} /></Field>
               <Field label="Country"><input value={form.country ?? ""} onChange={setF("country")} maxLength={100} /></Field>
             </div>
-            <div className="row">
+            <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Helpline"><input value={form.helpline ?? ""} onChange={setF("helpline")} maxLength={60} /></Field>
               <Field label="Email"><input type="email" value={form.email ?? ""} onChange={setF("email")} maxLength={120} /></Field>
             </div>
             <Field label="Website"><input value={form.website ?? ""} onChange={setF("website")} maxLength={200} /></Field>
-            <div><button className="btn btn-primary">Save community details</button></div>
+            <div><Button variant="primary">Save community details</Button></div>
           </form>
-          <div className="row" style={{ marginTop: 14, alignItems: "center" }}>
+          <div className="mt-5 flex flex-wrap items-center gap-4">
             {community?.logo_url && <img className="logo-preview" src={assetUrl(community.logo_url)} alt="Community logo" />}
             <Field label="Logo" hint="PNG, JPEG or WebP, up to 2 MB.">
               <input type="file" accept="image/png,image/jpeg,image/webp"
                      onChange={(e) => { const f = e.target.files?.[0]; if (f) void saveCommunity(() => api.uploadLogo(f), "Logo updated."); }} />
             </Field>
             {community?.logo_url && (
-              <button className="btn" onClick={() => void saveCommunity(() => api.deleteLogo(), "Logo removed.")}>Remove logo</button>
+              <Button onClick={() => void saveCommunity(() => api.deleteLogo(), "Logo removed.")}>Remove logo</Button>
             )}
           </div>
-        </div>
+        </Card>
       )}
 
-      <div className="card">
-        <h2>Account</h2>
-        <p>Signed in as <strong>{user?.full_name || user?.username}</strong>{user?.full_name && <span className="muted"> ({user.username})</span>}{" "}
-          <Badge tone="info">{isAdmin ? "Administrator" : "Guard"}</Badge></p>
-        <div className="row">
+      <Card>
+        <CardHead title="Account" />
+        <p className="m-0 text-[13px]">
+          Signed in as <strong>{user?.full_name || user?.username}</strong>
+          {user?.full_name && <span className="text-muted"> ({user.username})</span>}{" "}
+          <Badge tone="info">{isAdmin ? "Administrator" : "Guard"}</Badge>
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
           {!notif && (
-            <button className="btn" onClick={() => requestNotifications().then(setNotif)}>Enable alert notifications</button>
+            <Button onClick={() => requestNotifications().then(setNotif)}>Enable alert notifications</Button>
           )}
-          <button className="btn btn-danger" onClick={signOut}>Sign out</button>
+          <Button variant="danger" onClick={signOut}>Sign out</Button>
         </div>
-      </div>
+      </Card>
 
       <PasswordCard />
 
-      <div className="card">
-        <h2>System</h2>
+      <Card>
+        <CardHead title="System" />
         <ErrorBox error={system.error} onRetry={system.reload} />
         {!system.data ? <Spinner /> : (
-          <dl className="facts">
-            <dt>Version</dt><dd>{system.data.version}</dd>
-            <dt>AI engine</dt>
-            <dd>
+          <Facts>
+            <Fact label="Version">{system.data.version}</Fact>
+            <Fact label="AI engine">
               <Badge tone={health?.inference.status === "ok" ? "ok" : "warn"}>{health?.inference.status ?? "unknown"}</Badge>
-              {health?.inference.message && <span className="muted small"> {health.inference.message}</span>}
-            </dd>
-            {models?.device && <><dt>Device</dt><dd>{models.device}</dd></>}
-            {models?.trt_version && <><dt>TensorRT</dt><dd>{models.trt_version} ({models.precision})</dd></>}
-            {models?.models && <><dt>Models</dt><dd>{models.models.join(", ")}</dd></>}
-            <dt>Face match threshold</dt><dd>{system.data.policy.match_threshold.toFixed(2)}</dd>
-            <dt>Default analysis rate</dt><dd>{system.data.policy.sample_fps} frames/s</dd>
+              {health?.inference.message && <span className="text-[12px] text-muted"> {health.inference.message}</span>}
+            </Fact>
+            {models?.device && <Fact label="Device">{models.device}</Fact>}
+            {models?.trt_version && <Fact label="TensorRT">{models.trt_version} ({models.precision})</Fact>}
+            {models?.models && <Fact label="Models">{models.models.join(", ")}</Fact>}
+            <Fact label="Face match threshold">{system.data.policy.match_threshold.toFixed(2)}</Fact>
+            <Fact label="Default analysis rate">{system.data.policy.sample_fps} frames/s</Fact>
             {system.data.live && <>
-              <dt>Cameras</dt><dd>{system.data.live.cameras}</dd>
-              <dt>Visit ends after</dt><dd>{system.data.live.visit_gap_s} s with nothing in view</dd>
-              <dt>Repeat sightings</dt><dd>merged within {system.data.live.repeat_suppress_s} s</dd>
-              <dt>Snapshots kept</dt><dd>{system.data.live.snapshot_retention_days} days (the access log itself is kept)</dd>
+              <Fact label="Cameras">{system.data.live.cameras}</Fact>
+              <Fact label="Visit ends after">{system.data.live.visit_gap_s} s with nothing in view</Fact>
+              <Fact label="Repeat sightings">merged within {system.data.live.repeat_suppress_s} s</Fact>
+              <Fact label="Snapshots kept">{system.data.live.snapshot_retention_days} days (the access log itself is kept)</Fact>
             </>}
-            {health && <><dt>Free disk</dt><dd>{formatBytes(health.disk.free_bytes)} of {formatBytes(health.disk.total_bytes)}</dd></>}
-          </dl>
+            {health && <Fact label="Free disk">{formatBytes(health.disk.free_bytes)} of {formatBytes(health.disk.total_bytes)}</Fact>}
+          </Facts>
         )}
-      </div>
+      </Card>
     </>
   );
 }
@@ -162,17 +165,19 @@ function PasswordCard() {
   };
 
   return (
-    <form className="card" onSubmit={submit}>
-      <h2>Change password</h2>
-      <div className="grid-3">
-        <Field label="Current password"><input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" /></Field>
-        <Field label="New password" hint="At least 8 characters."><input type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" /></Field>
-        <Field label="Repeat new password"><input type="password" value={repeat} onChange={(e) => setRepeat(e.target.value)} autoComplete="new-password" /></Field>
-      </div>
-      <div className="row" style={{ marginTop: 12 }}>
-        <button className="btn" disabled={saving || !current || next.length < 8}>{saving ? "Saving…" : "Change password"}</button>
-        {msg && <span className={msg.ok ? "badge badge-ok" : "badge badge-bad"}>{msg.text}</span>}
-      </div>
+    <form onSubmit={submit}>
+      <Card>
+        <CardHead title="Change password" />
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field label="Current password"><input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" /></Field>
+          <Field label="New password" hint="At least 8 characters."><input type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" /></Field>
+          <Field label="Repeat new password"><input type="password" value={repeat} onChange={(e) => setRepeat(e.target.value)} autoComplete="new-password" /></Field>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Button disabled={saving || !current || next.length < 8}>{saving ? "Saving…" : "Change password"}</Button>
+          {msg && <Badge tone={msg.ok ? "ok" : "bad"}>{msg.text}</Badge>}
+        </div>
+      </Card>
     </form>
   );
 }
