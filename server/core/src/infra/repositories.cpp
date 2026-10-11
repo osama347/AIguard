@@ -186,6 +186,13 @@ bool FleetRepository::deleteDriver(int64_t id) {
     return db_.changes() > 0;
 }
 
+bool FleetRepository::ownsAnyVehicle(int64_t driverId) {
+    auto lk = db_.lock();
+    Stmt st(db_, "SELECT 1 FROM vehicles WHERE owner_id = ? LIMIT 1");
+    st.bind(1, driverId);
+    return st.step();
+}
+
 void FleetRepository::setDriverPhoto(int64_t driverId, const std::string& photoFile) {
     auto lk = db_.lock();
     Stmt st(db_, "UPDATE drivers SET photo_file = ?, updated_at = datetime('now') WHERE id = ?");

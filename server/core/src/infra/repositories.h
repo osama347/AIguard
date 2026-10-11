@@ -22,6 +22,9 @@ public:
     int64_t createDriver(const Driver& d);
     bool updateDriver(const Driver& d);
     bool deleteDriver(int64_t id);
+    // True if this driver is the current owner_id of any vehicle — the live check,
+    // not the drivers.is_owner flag, which stays set after that vehicle is gone.
+    bool ownsAnyVehicle(int64_t driverId);
     // Sets or clears (photoFile = "") the profile picture file name; the caller has
     // already written/removed the file itself.
     void setDriverPhoto(int64_t driverId, const std::string& photoFile);

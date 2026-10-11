@@ -133,7 +133,9 @@ Driver FleetService::updateDriver(Driver d, const std::string& actor) {
 
 void FleetService::deleteDriver(int64_t id, const std::string& actor) {
     Driver d = getDriver(id);   // 404 if missing
-    if (d.isOwner) throw ConflictError("reassign or delete their vehicle first: " + d.name + " owns a vehicle");
+    // Checks current ownership, not the is_owner flag: the flag stays set after that
+    // vehicle is deleted, which used to make an orphaned owner permanently stuck here.
+    if (fleet_.ownsAnyVehicle(id)) throw ConflictError("reassign or delete their vehicle first: " + d.name + " owns a vehicle");
     if (!fleet_.deleteDriver(id)) throw NotFoundError("driver " + std::to_string(id) + " not found");
     events_.audit(actor, "delete", "driver", std::to_string(id));
     invalidate();
@@ -270,9 +272,23 @@ Vehicle FleetService::updateVehicle(Vehicle v, const std::string& actor) {
 }
 
 void FleetService::deleteVehicle(int64_t id, const std::string& actor) {
+    Vehicle v = getVehicle(id);   // 404 if missing; capture the owner before it's gone
     if (!fleet_.deleteVehicle(id)) throw NotFoundError("vehicle " + std::to_string(id) + " not found");
     invalidate();
     events_.audit(actor, "delete", "vehicle", std::to_string(id));
+
+    // The owner only exists because they were auto-enrolled for this vehicle. If it
+    // was their only one (the normal case), leaving them behind is a dead record:
+    // "Owner" of nothing, with no action available to fix it. Clean them up too —
+    // unless they're also a regular authorized driver on another vehicle.
+    if (v.owner) {
+        Driver owner = getDriver(v.owner->id);
+        if (owner.vehicles.empty()) {
+            fleet_.deleteDriver(owner.id);
+            invalidate();   // their face templates are gone too; the matcher snapshot must drop them
+            events_.audit(actor, "delete", "driver", std::to_string(owner.id), owner.name + " (owner, vehicle deleted)");
+        }
+    }
 }
 
 void FleetService::assign(int64_t driverId, int64_t vehicleId, const std::string& actor) {
