@@ -1,5 +1,6 @@
-import { Fragment, useEffect, useMemo, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
+import { Check, PencilSimple, Trash, X } from "@phosphor-icons/react";
 import { api, fetchProtectedImage, type Driver, type EnrollResult, type Status, type Vehicle } from "../api/client";
 import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session";
@@ -27,6 +28,27 @@ function useFilter<T>(items: T[] | undefined, text: (t: T) => string) {
 
 function StatusSelect({ value, onChange }: { value: Status; onChange: (s: Status) => void }) {
   return <Select value={value} onValueChange={(v) => onChange(v as Status)} options={STATUSES.map((s) => ({ value: s, label: s }))} className="w-full" />;
+}
+
+/** A small icon-only button for a table row's Actions column. Always stops click
+ *  propagation, since rows themselves are clickable (open the full editor). */
+function IconButton({ onClick, title, tone = "muted", disabled, children }: {
+  onClick: () => void; title: string; tone?: "muted" | "bad" | "ok"; disabled?: boolean; children: ReactNode;
+}) {
+  return (
+    <button
+      type="button" title={title} aria-label={title} disabled={disabled}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      className={cn(
+        "grid size-7 shrink-0 place-items-center rounded-md transition-colors disabled:pointer-events-none disabled:opacity-40",
+        tone === "bad" ? "text-muted hover:bg-bad/10 hover:text-bad" :
+        tone === "ok" ? "text-muted hover:bg-ok/10 hover:text-ok" :
+        "text-muted hover:bg-surface-2 hover:text-text",
+      )}
+    >
+      {children}
+    </button>
+  );
 }
 
 function EnrollSummary({ result }: { result: EnrollResult | null }) {
@@ -77,16 +99,86 @@ function DriverAvatar({ photoUrl, name, size }: { photoUrl?: string | null; name
 /** The "People" tab of the Fleet page: owners and the drivers they've authorized.
  *  Creation always happens from the Vehicles tab (registering a vehicle enrolls its
  *  owner; redeeming a code adds another driver) — this tab is the roster + editor. */
+type DriverRowForm = { name: string; status: Status; phone: string };
+
+/** Confirms a person's deletion with the concrete consequences spelled out — not
+ *  just "are you sure?" — since it's permanent and affects more than this one row. */
+function DeleteDriverModal({ driver, onClose, onDeleted }: { driver: Driver; onClose: () => void; onDeleted: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const confirmDelete = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.deleteDriver(driver.id);
+      onDeleted();
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal title={`Delete ${driver.name}?`} onClose={() => !busy && onClose()}>
+      <div className="flex flex-col gap-3">
+        <ErrorBox error={error} />
+        <p className="m-0 text-[13px]">This permanently deletes the person record{driver.photo_count ? `, including ${driver.photo_count} enrolled face photo${driver.photo_count === 1 ? "" : "s"}` : ""}.</p>
+        <ul className="m-0 list-disc pl-5 text-[13px] text-muted">
+          {driver.vehicles.length > 0 && (
+            <li>Removes their authorization from {driver.vehicles.map((v) => v.plate_number).join(", ")}.</li>
+          )}
+          {driver.is_owner && <li>Marked as a vehicle owner — if they still own one, this will be refused until that vehicle is deleted first.</li>}
+          <li>This cannot be undone.</li>
+        </ul>
+        <div className="flex items-center justify-end gap-2">
+          <Button type="button" disabled={busy} onClick={onClose}>Cancel</Button>
+          <Button variant="danger" type="button" disabled={busy} onClick={() => void confirmDelete()}>{busy ? <Spinner /> : "Delete person"}</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** The "People" tab of the Fleet page: owners and the drivers they've authorized.
+ *  Creation always happens from the Vehicles tab (registering a vehicle enrolls its
+ *  owner; redeeming a code adds another driver) — this tab is the roster + editor.
+ *  Name/status/phone can also be quick-edited inline via the row's pencil icon,
+ *  without opening the full editor; richer management (photos, vehicles) still
+ *  needs it, opened by clicking the row itself. */
 function PeopleTab({ drivers, vehicles, isAdmin, onChanged }: {
   drivers: ReturnType<typeof useAsync<Driver[]>>; vehicles: Vehicle[]; isAdmin: boolean; onChanged: () => void;
 }) {
   const [editing, setEditing] = useState<Driver | null>(null);
+  const [deleting, setDeleting] = useState<Driver | null>(null);
+  const [editingRow, setEditingRow] = useState<number | null>(null);
+  const [rowForm, setRowForm] = useState<DriverRowForm>({ name: "", status: "active", phone: "" });
+  const [rowBusy, setRowBusy] = useState(false);
+  const [rowError, setRowError] = useState<string | null>(null);
   const textOf = useMemo(() => (d: Driver) => `${d.name} ${d.phone} ${d.vehicles.map((v) => v.plate_number).join(" ")}`, []);
   const { q, setQ, filtered } = useFilter(drivers.data, textOf);
+
+  const startEdit = (d: Driver) => {
+    setEditingRow(d.id);
+    setRowForm({ name: d.name, status: d.status, phone: d.phone });
+    setRowError(null);
+  };
+  const saveEdit = async (id: number) => {
+    setRowBusy(true);
+    setRowError(null);
+    try {
+      const updated = await api.updateDriver(id, rowForm);
+      drivers.setData((list) => (list ?? []).map((x) => (x.id === id ? updated : x)));
+      setEditingRow(null);
+    } catch (err) {
+      setRowError((err as Error).message);
+    } finally {
+      setRowBusy(false);
+    }
+  };
 
   return (
     <>
       <ErrorBox error={drivers.error} onRetry={drivers.reload} />
+      {rowError && <ErrorBox error={rowError} />}
       {drivers.loading && !drivers.data ? <div className="grid place-items-center py-16"><Spinner /></div> : !drivers.data?.length ? (
         <Empty title="No people yet">Register a vehicle to add its owner.</Empty>
       ) : (
@@ -94,18 +186,54 @@ function PeopleTab({ drivers, vehicles, isAdmin, onChanged }: {
           <div className="border-b border-line p-3"><input className="max-w-[320px]" placeholder="Search people…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
           <div className="overflow-x-auto">
             <table>
-              <thead><tr>{isAdmin && <th></th>}<th>Name</th><th>Status</th><th>Face photos</th><th>Vehicles</th><th>Phone</th></tr></thead>
+              <thead><tr>{isAdmin && <th></th>}<th>Name</th><th>Status</th><th>Face photos</th><th>Vehicles</th><th>Phone</th>{isAdmin && <th>Actions</th>}</tr></thead>
               <tbody>
-                {filtered.map((d) => (
-                  <tr key={d.id} className="cursor-pointer" onClick={() => setEditing(d)}>
-                    {isAdmin && <td><DriverAvatar photoUrl={d.photo_url} name={d.name} size="sm" /></td>}
-                    <td><strong className="font-medium">{d.name}</strong>{d.is_owner && <span className="text-[12px] text-muted"> · Owner</span>}</td>
-                    <td><Badge tone={STATUS_TONE[d.status]}>{d.status}</Badge></td>
-                    <td>{d.photo_count ? d.photo_count : <Badge tone="warn">none</Badge>}</td>
-                    <td className="font-mono">{d.vehicles.map((v) => v.plate_number).join(", ") || "—"}</td>
-                    <td>{d.phone || "—"}</td>
-                  </tr>
-                ))}
+                {filtered.map((d) => {
+                  const rowEditing = editingRow === d.id;
+                  return (
+                    <tr key={d.id} className={rowEditing ? "" : "cursor-pointer"} onClick={() => !rowEditing && setEditing(d)}>
+                      {isAdmin && <td><DriverAvatar photoUrl={d.photo_url} name={d.name} size="sm" /></td>}
+                      <td>
+                        {rowEditing ? (
+                          <input className="w-full min-w-[120px]" value={rowForm.name} onChange={(e) => setRowForm({ ...rowForm, name: e.target.value })} maxLength={120} />
+                        ) : (
+                          <><strong className="font-medium">{d.name}</strong>{d.is_owner && <span className="text-[12px] text-muted"> · Owner</span>}</>
+                        )}
+                      </td>
+                      <td>
+                        {rowEditing
+                          ? <StatusSelect value={rowForm.status} onChange={(status) => setRowForm({ ...rowForm, status })} />
+                          : <Badge tone={STATUS_TONE[d.status]}>{d.status}</Badge>}
+                      </td>
+                      <td>{d.photo_count ? d.photo_count : <Badge tone="warn">none</Badge>}</td>
+                      <td className="font-mono">{d.vehicles.map((v) => v.plate_number).join(", ") || "—"}</td>
+                      <td>
+                        {rowEditing
+                          ? <input className="w-full min-w-[110px]" value={rowForm.phone} onChange={(e) => setRowForm({ ...rowForm, phone: e.target.value })} maxLength={40} />
+                          : (d.phone || "—")}
+                      </td>
+                      {isAdmin && (
+                        <td>
+                          <div className="flex items-center gap-1">
+                            {rowEditing ? (
+                              <>
+                                <IconButton title="Save" tone="ok" disabled={rowBusy} onClick={() => void saveEdit(d.id)}>
+                                  {rowBusy ? <Spinner /> : <Check size={15} weight="bold" />}
+                                </IconButton>
+                                <IconButton title="Cancel" disabled={rowBusy} onClick={() => setEditingRow(null)}><X size={15} /></IconButton>
+                              </>
+                            ) : (
+                              <>
+                                <IconButton title="Edit" onClick={() => startEdit(d)}><PencilSimple size={15} /></IconButton>
+                                <IconButton title="Delete" tone="bad" onClick={() => setDeleting(d)}><Trash size={15} /></IconButton>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -119,6 +247,9 @@ function PeopleTab({ drivers, vehicles, isAdmin, onChanged }: {
           onClose={() => setEditing(null)}
           onSaved={onChanged}
         />
+      )}
+      {deleting && (
+        <DeleteDriverModal driver={deleting} onClose={() => setDeleting(null)} onDeleted={() => { setDeleting(null); onChanged(); }} />
       )}
     </>
   );
@@ -732,19 +863,90 @@ export function RegisterVehicleWizard({ initialPlate, onClose, onDone }: {
 }
 
 /** The "Vehicles" tab of the Fleet page. */
+type VehicleRowForm = { plate_number: string; make: string; model: string; color: string; status: Status };
+
+/** Confirms a vehicle's deletion with the concrete consequences spelled out. The
+ *  owner's fate is genuinely conditional (server-side: cascades only if they end up
+ *  with zero vehicles left), so this says so rather than overclaiming. */
+function DeleteVehicleModal({ vehicle, onClose, onDeleted }: { vehicle: Vehicle; onClose: () => void; onDeleted: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const otherDrivers = vehicle.drivers.filter((d) => d.id !== vehicle.owner?.id);
+  const confirmDelete = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.deleteVehicle(vehicle.id);
+      onDeleted();
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal title={`Delete ${vehicle.plate_number}?`} onClose={() => !busy && onClose()}>
+      <div className="flex flex-col gap-3">
+        <ErrorBox error={error} />
+        <p className="m-0 text-[13px]">This permanently removes the vehicle record and its authorization code.</p>
+        <ul className="m-0 list-disc pl-5 text-[13px] text-muted">
+          {vehicle.owner && (
+            <li>Its owner, <strong className="text-text">{vehicle.owner.name}</strong>, will also be deleted — unless they're also an authorized driver on another vehicle.</li>
+          )}
+          {otherDrivers.length > 0 && (
+            <li>{otherDrivers.length} other authorized driver{otherDrivers.length === 1 ? "" : "s"} will lose access to this vehicle, but their own record is kept.</li>
+          )}
+          <li>This cannot be undone.</li>
+        </ul>
+        <div className="flex items-center justify-end gap-2">
+          <Button type="button" disabled={busy} onClick={onClose}>Cancel</Button>
+          <Button variant="danger" type="button" disabled={busy} onClick={() => void confirmDelete()}>{busy ? <Spinner /> : "Delete vehicle"}</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** The "Vehicles" tab of the Fleet page. Plate/make/model/color/status can be
+ *  quick-edited inline via the row's pencil icon; owner and other-driver management
+ *  still needs the full editor, opened by clicking the row itself. */
 function VehiclesTab({ vehicles, isAdmin, onChanged }: {
   vehicles: ReturnType<typeof useAsync<Vehicle[]>>; isAdmin: boolean; onChanged: () => void;
 }) {
   const [editing, setEditing] = useState<Vehicle | null>(null);
   const [settingOwnerFor, setSettingOwnerFor] = useState<Vehicle | null>(null);
   const [viewingDriver, setViewingDriver] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState<Vehicle | null>(null);
+  const [editingRow, setEditingRow] = useState<number | null>(null);
+  const [rowForm, setRowForm] = useState<VehicleRowForm>({ plate_number: "", make: "", model: "", color: "", status: "active" });
+  const [rowBusy, setRowBusy] = useState(false);
+  const [rowError, setRowError] = useState<string | null>(null);
   const textOf = useMemo(() => (v: Vehicle) =>
     `${v.plate_number} ${v.plate_normalized} ${v.make} ${v.model} ${v.color} ${v.owner?.name ?? ""}`, []);
   const { q, setQ, filtered } = useFilter(vehicles.data, textOf);
 
+  const startEdit = (v: Vehicle) => {
+    setEditingRow(v.id);
+    setRowForm({ plate_number: v.plate_number, make: v.make, model: v.model, color: v.color, status: v.status });
+    setRowError(null);
+  };
+  const saveEdit = async (id: number) => {
+    setRowBusy(true);
+    setRowError(null);
+    try {
+      const updated = await api.updateVehicle(id, rowForm);
+      vehicles.setData((list) => (list ?? []).map((x) => (x.id === id ? updated : x)));
+      setEditingRow(null);
+    } catch (err) {
+      setRowError((err as Error).message);
+    } finally {
+      setRowBusy(false);
+    }
+  };
+
   return (
     <>
       <ErrorBox error={vehicles.error} onRetry={vehicles.reload} />
+      {rowError && <ErrorBox error={rowError} />}
       {vehicles.loading && !vehicles.data ? <div className="grid place-items-center py-16"><Spinner /></div> : !vehicles.data?.length ? (
         <Empty title="No vehicles yet">Register a vehicle and its owner to get started.</Empty>
       ) : (
@@ -752,27 +954,65 @@ function VehiclesTab({ vehicles, isAdmin, onChanged }: {
           <div className="border-b border-line p-3"><input className="max-w-[320px]" placeholder="Search plates or owners…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
           <div className="overflow-x-auto">
             <table>
-              <thead><tr><th>Plate</th><th>Status</th><th>Vehicle</th><th>Owner</th><th>Other authorized drivers</th></tr></thead>
+              <thead><tr><th>Plate</th><th>Status</th><th>Vehicle</th><th>Owner</th><th>Other authorized drivers</th>{isAdmin && <th>Actions</th>}</tr></thead>
               <tbody>
-                {filtered.map((v) => (
-                  <tr key={v.id} className="cursor-pointer" onClick={() => setEditing(v)}>
-                    <td className="font-mono"><strong className="font-medium">{v.plate_number}</strong></td>
-                    <td><Badge tone={STATUS_TONE[v.status]}>{v.status}</Badge></td>
-                    <td>{[v.color, v.make, v.model].filter(Boolean).join(" ") || "—"}</td>
-                    <td>
-                      {v.owner ? (
-                        <button type="button" className={LINK} onClick={(e) => { e.stopPropagation(); setViewingDriver(v.owner!.id); }}>
-                          {v.owner.name}
-                        </button>
-                      ) : (
-                        <button type="button" className="hover:no-underline" onClick={(e) => { e.stopPropagation(); setSettingOwnerFor(v); }}>
-                          <Badge tone="warn">No owner set</Badge>
-                        </button>
+                {filtered.map((v) => {
+                  const rowEditing = editingRow === v.id;
+                  return (
+                    <tr key={v.id} className={rowEditing ? "" : "cursor-pointer"} onClick={() => !rowEditing && setEditing(v)}>
+                      <td className="font-mono">
+                        {rowEditing
+                          ? <input className="w-28 font-mono" value={rowForm.plate_number} onChange={(e) => setRowForm({ ...rowForm, plate_number: e.target.value })} />
+                          : <strong className="font-medium">{v.plate_number}</strong>}
+                      </td>
+                      <td>
+                        {rowEditing
+                          ? <StatusSelect value={rowForm.status} onChange={(status) => setRowForm({ ...rowForm, status })} />
+                          : <Badge tone={STATUS_TONE[v.status]}>{v.status}</Badge>}
+                      </td>
+                      <td>
+                        {rowEditing ? (
+                          <div className="flex flex-wrap gap-1">
+                            <input className="w-20" placeholder="Make" value={rowForm.make} onChange={(e) => setRowForm({ ...rowForm, make: e.target.value })} />
+                            <input className="w-20" placeholder="Model" value={rowForm.model} onChange={(e) => setRowForm({ ...rowForm, model: e.target.value })} />
+                            <input className="w-16" placeholder="Color" value={rowForm.color} onChange={(e) => setRowForm({ ...rowForm, color: e.target.value })} />
+                          </div>
+                        ) : ([v.color, v.make, v.model].filter(Boolean).join(" ") || "—")}
+                      </td>
+                      <td>
+                        {v.owner ? (
+                          <button type="button" className={LINK} onClick={(e) => { e.stopPropagation(); setViewingDriver(v.owner!.id); }}>
+                            {v.owner.name}
+                          </button>
+                        ) : (
+                          <button type="button" className="hover:no-underline" onClick={(e) => { e.stopPropagation(); setSettingOwnerFor(v); }}>
+                            <Badge tone="warn">No owner set</Badge>
+                          </button>
+                        )}
+                      </td>
+                      <td><DriverNames drivers={v.drivers.filter((d) => d.id !== v.owner?.id)} onPick={setViewingDriver} /></td>
+                      {isAdmin && (
+                        <td>
+                          <div className="flex items-center gap-1">
+                            {rowEditing ? (
+                              <>
+                                <IconButton title="Save" tone="ok" disabled={rowBusy} onClick={() => void saveEdit(v.id)}>
+                                  {rowBusy ? <Spinner /> : <Check size={15} weight="bold" />}
+                                </IconButton>
+                                <IconButton title="Cancel" disabled={rowBusy} onClick={() => setEditingRow(null)}><X size={15} /></IconButton>
+                              </>
+                            ) : (
+                              <>
+                                <IconButton title="Edit" onClick={() => startEdit(v)}><PencilSimple size={15} /></IconButton>
+                                <IconButton title="Delete" tone="bad" onClick={() => setDeleting(v)}><Trash size={15} /></IconButton>
+                              </>
+                            )}
+                          </div>
+                        </td>
                       )}
-                    </td>
-                    <td><DriverNames drivers={v.drivers.filter((d) => d.id !== v.owner?.id)} onPick={setViewingDriver} /></td>
-                  </tr>
-                ))}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -788,6 +1028,9 @@ function VehiclesTab({ vehicles, isAdmin, onChanged }: {
           onSaved={() => { setSettingOwnerFor(null); onChanged(); }} />
       )}
       {viewingDriver !== null && <DriverCard driverId={viewingDriver} onClose={() => setViewingDriver(null)} />}
+      {deleting && (
+        <DeleteVehicleModal vehicle={deleting} onClose={() => setDeleting(null)} onDeleted={() => { setDeleting(null); onChanged(); }} />
+      )}
     </>
   );
 }

@@ -74,7 +74,9 @@ function Delta({ now, before }: { now: number; before: number }) {
   return <span>{up ? "▲" : "▼"} {Math.abs(now - before)} vs yesterday</span>;
 }
 
-function ChartCard({ title, subtitle, chart, table }: { title: string; subtitle?: string; chart: ReactNode; table: ReactNode }) {
+function ChartCard({ title, subtitle, chart, table, rangeControl }: {
+  title: string; subtitle?: string; chart: ReactNode; table: ReactNode; rangeControl?: ReactNode;
+}) {
   const [view, setView] = useState<"chart" | "table">("chart");
   return (
     <Card>
@@ -82,11 +84,14 @@ function ChartCard({ title, subtitle, chart, table }: { title: string; subtitle?
         title={title}
         sub={subtitle}
         actions={
-          <Segmented
-            value={view}
-            onChange={setView}
-            options={[{ value: "chart", label: "Chart" }, { value: "table", label: "Table" }]}
-          />
+          <div className="flex items-center gap-2">
+            {rangeControl}
+            <Segmented
+              value={view}
+              onChange={setView}
+              options={[{ value: "chart", label: "Chart" }, { value: "table", label: "Table" }]}
+            />
+          </div>
         }
       />
       {view === "table" ? table : chart}
@@ -147,6 +152,7 @@ export function DashboardPage() {
     }
   }), [load]);
 
+  const [range, setRange] = useState<"24h" | "14d">("24h");
   const [registeringPlate, setRegisteringPlate] = useState<string | null>(null);
   const ack = async (id: number) => {
     setActionError(null);
@@ -198,18 +204,20 @@ export function DashboardPage() {
 
       <div className="grid grid-cols-1 items-start gap-3.5 lg:grid-cols-[minmax(0,1.7fr)_minmax(300px,1fr)]">
         <div className="flex min-w-0 flex-col gap-3.5">
-          <ChartCard title="Visits, last 24 hours" subtitle="Each column is one hour, split by decision."
-                     table={<VerdictTable data={data.hourly} title={hourTitle} />}
-                     chart={<>
-                       <VerdictLegend />
-                       <VerdictColumns data={data.hourly} tick={hourTick} title={hourTitle} tickEvery={3} ariaLabel="Visits per hour over the last 24 hours" />
-                     </>} />
-          <ChartCard title="Visits, last 14 days"
-                     table={<VerdictTable data={data.daily} title={dayTitle} />}
-                     chart={<>
-                       <VerdictLegend />
-                       <VerdictColumns data={data.daily} tick={dayTick} title={dayTitle} ariaLabel="Visits per day over the last 14 days" />
-                     </>} />
+          <ChartCard
+            title={range === "24h" ? "Visits, last 24 hours" : "Visits, last 14 days"}
+            subtitle={range === "24h" ? "Each column is one hour, split by decision." : "Each column is one day, split by decision."}
+            rangeControl={
+              <Segmented value={range} onChange={setRange}
+                         options={[{ value: "24h", label: "24 hours" }, { value: "14d", label: "14 days" }]} />
+            }
+            table={<VerdictTable data={range === "24h" ? data.hourly : data.daily} title={range === "24h" ? hourTitle : dayTitle} />}
+            chart={<>
+              <VerdictLegend />
+              {range === "24h"
+                ? <VerdictColumns data={data.hourly} tick={hourTick} title={hourTitle} tickEvery={3} ariaLabel="Visits per hour over the last 24 hours" />
+                : <VerdictColumns data={data.daily} tick={dayTick} title={dayTitle} ariaLabel="Visits per day over the last 14 days" />}
+            </>} />
         </div>
 
         <div className="flex min-w-0 flex-col gap-3.5">
