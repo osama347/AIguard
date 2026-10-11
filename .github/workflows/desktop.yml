@@ -15,6 +15,8 @@ permissions:
 
 jobs:
   build:
+    permissions:
+      contents: write   # ensure release creation from matrix jobs has write scope
     strategy:
       fail-fast: false
       matrix:
@@ -54,7 +56,7 @@ jobs:
       # Release with the installers plus latest.json (what installed apps poll).
       - uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
