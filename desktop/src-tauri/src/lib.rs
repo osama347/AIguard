@@ -52,16 +52,29 @@ async fn discover_servers() -> Result<Vec<FoundServer>, String> {
         .map_err(|e| e.to_string())?
 }
 
+#[derive(Serialize)]
+struct UpdateCheckResult {
+    available: bool,
+    current_version: String,
+    latest_version: Option<String>,
+}
+
 // Checks GitHub Releases for a newer signed build (the endpoint and public key
 // are in tauri.conf.json) and, if the user agrees, installs it and restarts.
-// Failures are ignored on purpose: no internet, or no release yet, must never
-// get in the way of using the app on a LAN.
-async fn check_for_update(app: tauri::AppHandle) {
+// Called silently at startup (failures ignored: no internet, or no release yet,
+// must never get in the way of using the app on a LAN) and invokable from the
+// frontend's "Check for updates" button, which does want to see the result.
+#[tauri::command]
+async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateCheckResult, String> {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
     use tauri_plugin_updater::UpdaterExt;
 
-    let Ok(updater) = app.updater() else { return };
-    let Ok(Some(update)) = updater.check().await else { return };
+    let current_version = app.package_info().version.to_string();
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
+        return Ok(UpdateCheckResult { available: false, current_version, latest_version: None });
+    };
+    let latest_version = update.version.clone();
     let ask = app
         .dialog()
         .message(format!(
@@ -77,9 +90,14 @@ async fn check_for_update(app: tauri::AppHandle) {
     let yes = tauri::async_runtime::spawn_blocking(move || rx.recv().unwrap_or(false))
         .await
         .unwrap_or(false);
-    if yes && update.download_and_install(|_, _| {}, || {}).await.is_ok() {
+    if yes {
+        update
+            .download_and_install(|_, _| {}, || {})
+            .await
+            .map_err(|e| e.to_string())?;
         app.restart();
     }
+    Ok(UpdateCheckResult { available: true, current_version, latest_version: Some(latest_version) })
 }
 
 pub fn run() {
@@ -88,10 +106,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            tauri::async_runtime::spawn(check_for_update(app.handle().clone()));
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = check_for_update(handle).await;
+            });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![discover_servers])
+        .invoke_handler(tauri::generate_handler![discover_servers, check_for_update])
         .run(tauri::generate_context!())
         .expect("failed to start the Guard++ desktop app");
 }

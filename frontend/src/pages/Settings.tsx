@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { notificationsEnabled, requestNotifications } from "../lib/notify";
-import { api, assetUrl, isDesktop, serverUrl, setServerUrl, type CommunityInput } from "../api/client";
+import { api, assetUrl, checkForUpdate, isDesktop, serverUrl, setServerUrl, type CommunityInput } from "../api/client";
 import { useAsync } from "../lib/useAsync";
 import { useSession } from "../session";
 import { formatBytes } from "../lib/format";
@@ -24,6 +24,21 @@ export function SettingsPage() {
   };
   const [notif, setNotif] = useState(true);
   useEffect(() => { notificationsEnabled().then(setNotif); }, []);
+  const [updateMsg, setUpdateMsg] = useState<string | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const runUpdateCheck = async () => {
+    setCheckingUpdate(true); setUpdateMsg(null);
+    try {
+      const r = await checkForUpdate();
+      setUpdateMsg(r.available
+        ? `Update ${r.latest_version} available — follow the install prompt.`
+        : `You're up to date (${r.current_version}).`);
+    } catch (e) {
+      setUpdateMsg((e as Error).message);
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
   const models = system.data?.models as { state?: string; models?: string[]; trt_version?: string; device?: string; precision?: string } | null | undefined;
 
   return (
@@ -39,6 +54,12 @@ export function SettingsPage() {
             </Field>
             <button className="btn">Save & reconnect</button>
           </form>
+          <div className="row" style={{ marginTop: 12, alignItems: "center" }}>
+            <button className="btn" disabled={checkingUpdate} onClick={runUpdateCheck}>
+              {checkingUpdate ? "Checking…" : "Check for updates"}
+            </button>
+            {updateMsg && <span className="muted small">{updateMsg}</span>}
+          </div>
         </div>
       )}
 

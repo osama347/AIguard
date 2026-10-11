@@ -304,6 +304,17 @@ export async function discoverServers(): Promise<FoundServer[]> {
   return (await invoke("discover_servers")) as FoundServer[];
 }
 
+export interface UpdateCheckResult { available: boolean; current_version: string; latest_version: string | null }
+
+/** Asks the desktop shell to re-check GitHub Releases for a newer signed build. The same
+ *  check runs silently at startup; this is for a user-triggered "Check for updates" button.
+ *  If one is found, the shell shows its own native install/restart dialog. */
+export async function checkForUpdate(): Promise<UpdateCheckResult> {
+  const invoke = (window as unknown as { __TAURI__?: { core?: { invoke?: (cmd: string) => Promise<unknown> } } }).__TAURI__?.core?.invoke;
+  if (!isDesktop || !invoke) throw new ApiError(0, "unsupported", "Updates are only checked in the desktop app");
+  return (await invoke("check_for_update")) as UpdateCheckResult;
+}
+
 /** Absolute URL for a server-relative, unauthenticated path such as Community.logo_url. */
 export const assetUrl = (path: string) => serverUrl() + path;
 
